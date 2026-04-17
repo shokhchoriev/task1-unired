@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-# Register your models here.
+
 
 class CardAdmin(admin.ModelAdmin):
     list_display = (
