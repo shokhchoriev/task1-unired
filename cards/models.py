@@ -8,8 +8,8 @@ class Card(models.Model):
         ('expired', 'Expired'),
     ]
 
-    card_number = models.CharField(max_length=25)
-    expire = models.CharField(max_length=10)
+    card_number = models.CharField(max_length=16)
+    expire = models.CharField(max_length=15)
     phone = models.CharField(max_length=20, blank=True, null=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES)
     balance = models.DecimalField(max_digits=15, decimal_places=2)
@@ -18,7 +18,7 @@ class Card(models.Model):
         return self.card_number
     
 
-    
+
     def formatted_card_number(self):
         num = self.card_number.replace(" ", "")
         return " ".join([num[i:i+4] for i in range(0, len(num), 4)])

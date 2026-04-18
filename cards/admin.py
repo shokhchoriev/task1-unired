@@ -19,6 +19,17 @@ class CardAdmin(admin.ModelAdmin):
         'balance'
     )
 
+    list_filter = (
+        'status',
+        'expire',
+        'balance',
+    )
+
+    search_fields = (
+        'card_number',
+        'phone',
+    )
+
     def formatted_card_number(self, obj):
         return obj.formatted_card_number()
 
