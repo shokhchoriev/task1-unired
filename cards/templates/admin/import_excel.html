@@ -1,7 +1,13 @@
-<h2>Excel yuklash</h2>
+{% extends "admin/base_site.html" %}
 
-<form method="post" enctype="multipart/form-data">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit">Yuklash</button>
-</form>
+{% block content %}
+<div id="content-main">
+    <h1>Cards import</h1>
+    <p>Excel (`.xlsx`, `.xls`) yoki CSV fayl yuklang.</p>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="default">Import</button>
+    </form>
+</div>
+{% endblock %}

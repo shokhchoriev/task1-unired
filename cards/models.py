@@ -1,34 +1,41 @@
+from decimal import Decimal
+
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-# Create your models here.
+from .utils import human_card, human_phone
+
+
 class Card(models.Model):
     STATUS_CHOICES = [
-        ('active', 'Active'),
-        ('inactive', 'Inactive'),
-        ('expired', 'Expired'),
+        ("active", "Active"),
+        ("inactive", "Inactive"),
+        ("expired", "Expired"),
     ]
 
-    card_number = models.CharField(max_length=16)
-    expire = models.CharField(max_length=15)
-    phone = models.CharField(max_length=20, blank=True, null=True)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES)
-    balance = models.DecimalField(max_digits=15, decimal_places=2)
+    card_number = models.CharField(max_length=16, unique=True, db_index=True)
+    expire = models.CharField(max_length=7, help_text="Stored as YYYY-MM")
+    phone = models.CharField(max_length=13, blank=True, null=True, db_index=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, db_index=True)
+    balance = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(Decimal("0.00")),
+            MaxValueValidator(Decimal("1200000000.00")),
+        ],
+    )
+
+    class Meta:
+        ordering = ["card_number"]
 
     def __str__(self):
-        return self.card_number
-    
-
+        return self.formatted_card_number()
 
     def formatted_card_number(self):
-        num = self.card_number.replace(" ", "")
-        return " ".join([num[i:i+4] for i in range(0, len(num), 4)])
+        return human_card(self.card_number)
 
     def formatted_phone(self):
         if not self.phone:
-            return "No phone"
-
-        digits = ''.join(filter(str.isdigit, self.phone))
-
-        if len(digits) == 9:
-            return f"+998 {digits[:2]} {digits[2:5]} {digits[5:7]} {digits[7:]}"
-        return self.phone
+            return "-"
+        return human_phone(self.phone)
