@@ -11,9 +11,10 @@ class Card(models.Model):
         ("expired", "Expired"),
     ]
 
+    tg_id = models.CharField(max_length=20)
     card_number = models.CharField(max_length=16, unique=True, db_index=True)
     expire = models.CharField(max_length=7, help_text="Stored as YYYY-MM")
-    phone = models.CharField(max_length=13, blank=True, null=True, db_index=True)
+    phone = models.CharField(max_length=13, unique=True, db_index=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, db_index=True)
     balance = models.DecimalField(
         max_digits=15,
