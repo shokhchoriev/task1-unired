@@ -1,9 +1,7 @@
 from django.db import models
-
-from django.db import models
 from django.core.validators import MinValueValidator
 from django.utils import timezone
-
+from django.core.exceptions import ValidationError
 
 class Transfer(models.Model):
     class State(models.TextChoices):
@@ -56,3 +54,15 @@ class Transfer(models.Model):
 
     def __str__(self):
         return f"{self.ext_id} - {self.state}"
+    
+
+class Error(models.Model):
+    code = models.IntegerField(unique=True)
+    en = models.CharField(max_length=100)
+    ru = models.CharField(max_length=100)
+    uz = models.CharField(max_length=100)
+
+    def __str__(self):
+        return f"{self.code} - {self.en}"
+    
+    
