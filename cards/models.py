@@ -1,8 +1,6 @@
 from decimal import Decimal
-
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-
 from .utils import human_card, human_phone
 
 
