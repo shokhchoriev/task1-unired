@@ -43,7 +43,7 @@ def format_phone(raw_phone):
 
     digits = re.sub(r"\D", "", str(raw_phone))
     if len(digits) == 7:
-        # Sample data sometimes has 7-digit local number like 973-03-03.
+       
         digits = f"99899{digits}"
     elif len(digits) == 9:
         digits = f"998{digits}"
@@ -160,7 +160,6 @@ def send_message(message, chat_id=12345):
     return True
 
 
-# Backward-compatible aliases used by earlier code.
 def normalize_card_number(card_number):
     return format_card(card_number)
 
