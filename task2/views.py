@@ -11,12 +11,18 @@ from .models import Transfer, Error
 
 logger = logging.getLogger(__name__)
 
+
+
+
 def get_custom_error(code):
     try:
         err_obj = Error.objects.get(code=code)
         return RPCError(code=err_obj.code, message=err_obj.en)
     except Error.DoesNotExist:
         return RPCError(code=code, message="Unknown error")
+
+
+
 
 @method
 def transfer_create(ext_id, sender_card_number, sender_card_expiry,
@@ -52,6 +58,9 @@ def transfer_create(ext_id, sender_card_number, sender_card_expiry,
         logger.error(f"Create error: {str(e)}")
         return get_custom_error(32000)
 
+
+
+
 @method
 def transfer_confirm(ext_id, otp) -> Result:
     try:
@@ -59,6 +68,11 @@ def transfer_confirm(ext_id, otp) -> Result:
         
         if transfer.state != Transfer.CREATED:
             return get_custom_error(32708)
+        
+        if transfer.try_count >= 3:
+            transfer.state = Transfer.CANCELLED
+            transfer.save()
+            return get_custom_error(32711)
 
         transfer.try_count += 1
         if transfer.otp != otp:
@@ -70,6 +84,9 @@ def transfer_confirm(ext_id, otp) -> Result:
         return Success({"ext_id": ext_id, "state": transfer.state})
     except Transfer.DoesNotExist:
         return get_custom_error(32704)
+
+
+
 
 @method
 def transfer_cancel(ext_id) -> Result:
@@ -83,6 +100,9 @@ def transfer_cancel(ext_id) -> Result:
     except Transfer.DoesNotExist:
         return get_custom_error(32704)
 
+
+
+
 @method
 def transfer_state(ext_id) -> Result:
     try:
@@ -91,16 +111,26 @@ def transfer_state(ext_id) -> Result:
     except Transfer.DoesNotExist:
         return get_custom_error(32704)
 
+
+
+
 @method
 def transfer_history(card_number=None, status=None, date_from=None, date_to=None) -> Result:
     filters = {}
     if card_number: filters['sender_card_number'] = card_number
     if status: filters['state'] = status
 
-    
+    if date_from:
+        filters['created_at_gte'] = datetime.fromisoformat(date_from)
+    if date_to:
+        filters['created_at_lte'] = datetime.fromisoformat(date_to)
+
     transfers = Transfer.objects.filter(**filters)
-    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state} for t in transfers]
+    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in transfers]
     return Success(data)
+
+
+
 
 @csrf_exempt
 def json_rpc_view(request):
