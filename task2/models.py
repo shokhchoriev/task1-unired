@@ -17,9 +17,7 @@ class Transfer(models.Model):
 
     sender_card_number = models.CharField(max_length=16, db_index=True)
     receiver_card_number = models.CharField(max_length=16)
-
     sender_card_expiry = models.CharField(max_length=5)  
-
     sender_phone = models.CharField(max_length=20, null=True, blank=True)
     receiver_phone = models.CharField(max_length=20, null=True, blank=True)
 
