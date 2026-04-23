@@ -3,6 +3,36 @@
 from django.db import migrations, models
 
 
+def deduplicate_card_phones(apps, schema_editor):
+    Card = apps.get_model("cards", "Card")
+
+    rows = list(Card.objects.order_by("id").values_list("id", "phone"))
+    normalized = [(row_id, (phone or "").strip()) for row_id, phone in rows]
+    existing_non_empty = [phone for _, phone in normalized if phone]
+    reserved = set(existing_non_empty)
+    kept = set()
+
+    updates = []
+
+    for row_id, phone in normalized:
+        if phone and phone not in kept:
+            kept.add(phone)
+            updates.append((row_id, phone))
+            continue
+
+        seed = row_id or 1
+        candidate = f"+998{seed:09d}"
+        while candidate in reserved:
+            seed += 1
+            candidate = f"+998{seed:09d}"
+
+        reserved.add(candidate)
+        updates.append((row_id, candidate))
+
+    for row_id, phone in updates:
+        Card.objects.filter(id=row_id).update(phone=phone)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -16,6 +46,7 @@ class Migration(migrations.Migration):
             field=models.CharField(default=1, max_length=20),
             preserve_default=False,
         ),
+        migrations.RunPython(deduplicate_card_phones, migrations.RunPython.noop),
         migrations.AlterField(
             model_name='card',
             name='phone',
