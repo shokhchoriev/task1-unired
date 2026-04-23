@@ -193,31 +193,21 @@ def transfer_history(card_number=None, status=None, date_from=None, date_to=None
     if date_from:
         queryset = queryset.filter(created_at__gte=datetime.fromisoformat(date_from))
     if date_to:
-        queryset = queryset.filter(created_at__lte=datetime.fromisoformat(date_to))
+        filters['created_at_lte'] = datetime.fromisoformat(date_to)
 
-    data = [
-        {
-            "ext_id": transfer.ext_id,
-            "amount": str(transfer.sending_amount),
-            "state": transfer.state,
-            "date": transfer.created_at.isoformat(),
-        }
-        for transfer in queryset
-    ]
+    transfers = Transfer.objects.filter(**filters)
+    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in transfers]
     return Success(data)
+
+
 
 
 @csrf_exempt
 def json_rpc_view(request):
-    try:
-        request_data = request.body.decode("utf-8")
-        request_logger.info("request=%s", request_data)
-        response = dispatch(request_data)
-        request_logger.info("response=%s", response)
-        return HttpResponse(response, content_type="application/json")
-    except Exception:
-        error_logger.exception("json_rpc_view failure")
-        return JsonResponse(
-            {"jsonrpc": "2.0", "error": {"code": ERR_INTERNAL, "message": "Internal error"}, "id": None},
-            status=500,
-        )
+    request_data = request.body.decode("utf-8")
+    logger.info(f"Request: {request_data}")
+    
+    response = dispatch(request_data)
+    
+    logger.info(f"Response: {response}")
+    return JsonResponse(response, safe=False)
