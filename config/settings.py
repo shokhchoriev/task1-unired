@@ -12,11 +12,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-8t2gl36pmw$)j_u8$*agz_qd(w^5gjx(d9%fn($u77ry)i2!22"
 
 # SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = os.getenv("DEBUG", "True").strip().lower() in {"1", "true", "yes", "on"}
 
-DEBUG = False
-
-
-ALLOWED_HOSTS = ['://pythonanywhere.com', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".pythonanywhere.com"]
 
 
 # Application definition
@@ -28,7 +26,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "cards", 
+    "cards",
     "task2",
 ]
 
@@ -47,7 +45,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / 'templates'],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -102,7 +100,6 @@ STATIC_URL = "/static/"
 
 
 STATIC_ROOT = BASE_DIR / "static"
-
 
 
 
