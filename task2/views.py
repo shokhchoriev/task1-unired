@@ -125,6 +125,7 @@ def transfer_history(card_number=None, status=None, date_from=None, date_to=None
     if date_to:
         filters['created_at_lte'] = datetime.fromisoformat(date_to)
 
+from django.views.decorators.csrf import csrf_exempt
     transfers = Transfer.objects.filter(**filters)
     data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in transfers]
     return Success(data)
