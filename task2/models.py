@@ -55,6 +55,10 @@ class Transfer(models.Model):
     def __str__(self):
         return f"{self.ext_id} - {self.state}"
     
+    def validate_currency(value):
+        if value not in [643, 840]:
+            raise ValidationError("Currency must be 643 or 840")
+    
 
 class Error(models.Model):
     code = models.IntegerField(unique=True)
@@ -65,4 +69,5 @@ class Error(models.Model):
     def __str__(self):
         return f"{self.code} - {self.en}"
     
-    
+
+
