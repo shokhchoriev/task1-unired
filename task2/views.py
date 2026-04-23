@@ -75,8 +75,6 @@ def transfer_create(ext_id, sender_card_number, sender_card_expiry,
         "otp_sent": otp_sent
     }
 
-
-
 from django.views.decorators.csrf import csrf_exempt
 
 def json_rpc_view(request):
