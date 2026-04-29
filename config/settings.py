@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "cards",
     "task2",
+    "tgbot",
 ]
 
 MIDDLEWARE = [
@@ -110,6 +111,8 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8755117994:AAHEigraYmQ4EkeZm8GDXHg0a6kJsWR56co")
 
 
 LOG_DIR = BASE_DIR / "logs"

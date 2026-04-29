@@ -2,6 +2,9 @@ import logging
 import random
 from decimal import Decimal
 
+import httpx
+from django.conf import settings
+
 from .models import Transfer
 
 
@@ -9,21 +12,34 @@ logger = logging.getLogger(__name__)
 
 
 class FakeNotificationService:
-    """
-    Fake integration for SMS/Telegram notifications.
-    Real provider is intentionally not called; we only log/send mock data.
-    """
+    """Sends OTP via real Telegram Bot API (falls back to log-only if token missing)."""
 
     def send_sms(self, phone, message):
-        logger.info("[FAKE_SMS] to=%s message=%s", phone, message)
+        logger.info("[SMS] to=%s message=%s", phone, message)
         return {"channel": "sms", "to": phone, "sent": True}
 
     def send_telegram(self, tg_id, message):
-        logger.info("[FAKE_TELEGRAM] tg_id=%s message=%s", tg_id, message)
-        return {"channel": "telegram", "to": tg_id, "sent": True}
+        token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+        if not token or not str(tg_id).lstrip("-").isdigit():
+            logger.info("[TELEGRAM_LOG] tg_id=%s message=%s", tg_id, message)
+            return {"channel": "telegram", "to": tg_id, "sent": False}
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            resp = httpx.post(
+                url,
+                json={"chat_id": int(tg_id), "text": message},
+                timeout=5,
+            )
+            ok = resp.status_code == 200 and resp.json().get("ok")
+            logger.info("[TELEGRAM] tg_id=%s sent=%s", tg_id, ok)
+            return {"channel": "telegram", "to": tg_id, "sent": ok}
+        except Exception:
+            logger.warning("[TELEGRAM] send failed tg_id=%s", tg_id, exc_info=True)
+            return {"channel": "telegram", "to": tg_id, "sent": False}
 
     def send_otp(self, phone, tg_id, otp):
-        message = f"Transfer OTP code: {otp}"
+        message = f"🔐 O'tkazma OTP kodi: {otp}\n\nUshbu kodni hech kimga bermang!"
         self.send_sms(phone=phone, message=message)
         self.send_telegram(tg_id=tg_id, message=message)
         return True
