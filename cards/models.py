@@ -1,4 +1,5 @@
 from decimal import Decimal
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from .utils import human_card, human_phone
@@ -37,4 +38,7 @@ class Card(models.Model):
     def formatted_phone(self):
         if not self.phone:
             return "-"
-        return human_phone(self.phone)
+        try:
+            return human_phone(self.phone)
+        except ValidationError:
+            return self.phone or "-"

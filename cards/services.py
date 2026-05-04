@@ -30,7 +30,7 @@ def _read_table(uploaded_file):
     raise ValidationError("Only .xlsx, .xls, or .csv files are supported")
 
 
-def import_cards_from_excel(uploaded_file):
+def import_cards_from_excel(uploaded_file, row_filter=None):
     errors = []
     success = 0
 
@@ -52,6 +52,20 @@ def import_cards_from_excel(uploaded_file):
             expire = format_expire(row.get("expire"))
             status = format_status(row.get("status"))
             balance = parse_balance(row.get("balance"))
+
+            row_values = {
+                "card_number": card_number,
+                "expire": expire,
+                "phone": phone,
+                "status": status,
+                "balance": balance,
+            }
+
+            if row_filter and not row_filter(row_values):
+                errors.append(
+                    f"Row {row_number}: skipped because it does not match the current filter."
+                )
+                continue
 
             Card.objects.update_or_create(
                 card_number=card_number,
