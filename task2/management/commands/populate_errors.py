@@ -2,73 +2,27 @@ from django.core.management.base import BaseCommand
 
 from task2.models import Error
 
-
 DEFAULT_ERRORS = [
-    {
-        "code": 32000,
-        "en": "Internal server error",
-        "ru": "Vnutrennyaya oshibka servera",
-        "uz": "Ichki server xatosi",
-    },
-    {
-        "code": 32701,
-        "en": "Transfer with this ext_id already exists",
-        "ru": "Perevod s takim ext_id uzhe sushchestvuet",
-        "uz": "Bu ext_id bilan transfer allaqachon mavjud",
-    },
-    {
-        "code": 32702,
-        "en": "Insufficient balance",
-        "ru": "Nedostatochno sredstv",
-        "uz": "Balans yetarli emas",
-    },
-    {
-        "code": 32703,
-        "en": "Invalid currency",
-        "ru": "Nekorrektnaya valyuta",
-        "uz": "Noto'g'ri valyuta",
-    },
-    {
-        "code": 32704,
-        "en": "Object not found",
-        "ru": "Ob'ekt ne nayden",
-        "uz": "Obyekt topilmadi",
-    },
-    {
-        "code": 32705,
-        "en": "Invalid amount",
-        "ru": "Nekorrektnaya summa",
-        "uz": "Noto'g'ri summa",
-    },
-    {
-        "code": 32708,
-        "en": "Transfer is not in created state",
-        "ru": "Perevod ne v sostoyanii created",
-        "uz": "Transfer created holatida emas",
-    },
-    {
-        "code": 32709,
-        "en": "Invalid OTP",
-        "ru": "Nevernyy OTP",
-        "uz": "Noto'g'ri OTP",
-    },
-    {
-        "code": 32710,
-        "en": "Transfer cannot be cancelled",
-        "ru": "Perevod nelzya otmenit",
-        "uz": "Transferni bekor qilib bo'lmaydi",
-    },
-    {
-        "code": 32711,
-        "en": "OTP attempts exceeded",
-        "ru": "Prevyshen limit popytok OTP",
-        "uz": "OTP urinishlar limiti tugadi",
-    },
+    {"code": 32700, "en": "Ext id must be unique", "ru": "Ext id должен быть уникальным", "uz": "Ext id noyob bo'lishi kerak"},
+    {"code": 32701, "en": "Ext id already exists", "ru": "Ext id уже существует", "uz": "Ext id allaqachon mavjud"},
+    {"code": 32702, "en": "Balance is not enough", "ru": "Недостаточно средств", "uz": "Hisobda mablag' yetarli emas"},
+    {"code": 32703, "en": "SMS service is not bind", "ru": "SMS сервис не подключен", "uz": "SMS xizmati ulanmagan"},
+    {"code": 32704, "en": "Card expiry is not valid", "ru": "Срок действия карты недействителен", "uz": "Karta amal qilish muddati noto'g'ri"},
+    {"code": 32705, "en": "Card is not active", "ru": "Карта неактивна", "uz": "Karta faol emas"},
+    {"code": 32706, "en": "Unknown error occurred", "ru": "Произошла неизвестная ошибка", "uz": "Noma'lum xatolik yuz berdi"},
+    {"code": 32707, "en": "Currency not allowed except 860, 643, 840", "ru": "Разрешены только валюты 860, 643, 840", "uz": "Faqat 860, 643, 840 valyutalari ruxsat etilgan"},
+    {"code": 32708, "en": "Amount is greater than allowed", "ru": "Сумма превышает допустимую", "uz": "Miqdor ruxsat etilgan chegaradan katta"},
+    {"code": 32709, "en": "Amount is small", "ru": "Сумма слишком мала", "uz": "Miqdor juda kichik"},
+    {"code": 32710, "en": "OTP expired", "ru": "OTP истек", "uz": "OTP muddati tugagan"},
+    {"code": 32711, "en": "Count of try is reached", "ru": "Превышено количество попыток", "uz": "Urinishlar soni tugadi"},
+    {"code": 32712, "en": "OTP is wrong, left try count is 2", "ru": "Неверный OTP, осталось 2 попытки", "uz": "Noto'g'ri OTP, yana 2 urinish qoldi"},
+    {"code": 32713, "en": "Method is not allowed", "ru": "Метод не разрешён", "uz": "Usulga ruxsat berilmagan"},
+    {"code": 32714, "en": "Method not found", "ru": "Метод не найден", "uz": "Usul topilmadi"},
 ]
 
 
 class Command(BaseCommand):
-    help = "Populate task2 Error table with default JSON-RPC business errors"
+    help = "Populate task2 Error table with predefined JSON-RPC business error codes"
 
     def handle(self, *args, **options):
         created_count = 0
@@ -76,35 +30,27 @@ class Command(BaseCommand):
         unchanged_count = 0
 
         for item in DEFAULT_ERRORS:
-            error_obj, created = Error.objects.get_or_create(
+            obj, created = Error.objects.get_or_create(
                 code=item["code"],
-                defaults={
-                    "en": item["en"],
-                    "ru": item["ru"],
-                    "uz": item["uz"],
-                },
+                defaults={"en": item["en"], "ru": item["ru"], "uz": item["uz"]},
             )
 
             if created:
                 created_count += 1
                 continue
 
-            dirty_fields = []
-            for field_name in ("en", "ru", "uz"):
-                new_value = item[field_name]
-                if getattr(error_obj, field_name) != new_value:
-                    setattr(error_obj, field_name, new_value)
-                    dirty_fields.append(field_name)
-
-            if dirty_fields:
-                error_obj.save(update_fields=dirty_fields)
+            dirty = [f for f in ("en", "ru", "uz") if getattr(obj, f) != item[f]]
+            if dirty:
+                for f in dirty:
+                    setattr(obj, f, item[f])
+                obj.save(update_fields=dirty)
                 updated_count += 1
             else:
                 unchanged_count += 1
 
         self.stdout.write(
             self.style.SUCCESS(
-                "populate_errors done: "
-                f"created={created_count}, updated={updated_count}, unchanged={unchanged_count}"
+                f"populate_errors done: created={created_count}, "
+                f"updated={updated_count}, unchanged={unchanged_count}"
             )
         )
