@@ -2,9 +2,9 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from cards.utils import format_expire
-from tgbot.helpers import create_card_db
+from tgbot.helpers import create_card_db, link_card_to_tg
 from tgbot.keyboards import cancel_keyboard, main_menu
-from tgbot.states import CARD_BALANCE, CARD_EXPIRY, CARD_NUMBER, CARD_PHONE
+from tgbot.states import CARD_BALANCE, CARD_EXPIRY, CARD_NUMBER, CARD_PHONE, LINK_CARD_EXPIRY, LINK_CARD_NUMBER
 
 
 async def add_card_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -106,6 +106,69 @@ async def card_balance_received(update: Update, context: ContextTypes.DEFAULT_TY
         f"💳 Raqam: <code>{card.card_number[:4]} **** **** {card.card_number[-4:]}</code>\n"
         f"📅 Muddat: {card.expire}\n"
         f"💰 Balans: {card.balance:,.2f} UZS",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# ─── Link existing card ───────────────────────────────────────────────────────
+
+async def link_card_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text(
+        "🔗 <b>Mavjud kartani ulash</b>\n\n"
+        "Admin panelda qo'shilgan kartani Telegram akkauntingizga ulash uchun "
+        "karta raqamini kiriting:\n\n"
+        "/cancel — bekor qilish",
+        parse_mode="HTML",
+        reply_markup=cancel_keyboard(),
+    )
+    return LINK_CARD_NUMBER
+
+
+async def link_card_number_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Bekor qilish":
+        return await _cancel(update, context)
+
+    number = update.message.text.strip().replace(" ", "")
+    if not number.isdigit() or len(number) != 16:
+        await update.message.reply_text("❌ Noto'g'ri format. 16 ta raqam kiriting:")
+        return LINK_CARD_NUMBER
+
+    context.user_data["link_card_number"] = number
+    await update.message.reply_text(
+        "📅 Kartaning amal qilish muddatini kiriting (MM/YY):\n"
+        "(tekshirish uchun kerak)"
+    )
+    return LINK_CARD_EXPIRY
+
+
+async def link_card_expiry_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Bekor qilish":
+        return await _cancel(update, context)
+
+    tg_id = update.effective_user.id
+    card_number = context.user_data.get("link_card_number")
+
+    card, error = await link_card_to_tg(
+        tg_id=tg_id,
+        card_number=card_number,
+        expire_raw=update.message.text.strip(),
+    )
+
+    if error:
+        await update.message.reply_text(f"❌ {error}", reply_markup=main_menu())
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    await update.message.reply_text(
+        f"✅ <b>Karta muvaffaqiyatli ulandi!</b>\n\n"
+        f"💳 Raqam: <code>{card.card_number[:4]} **** **** {card.card_number[-4:]}</code>\n"
+        f"📅 Muddat: {card.expire}\n"
+        f"💰 Balans: {card.balance:,.2f} UZS\n\n"
+        f"Endi bu karta /mycards da ko'rinadi va OTP Telegramga keladi.",
         parse_mode="HTML",
         reply_markup=main_menu(),
     )

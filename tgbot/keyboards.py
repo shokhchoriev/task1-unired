@@ -6,6 +6,7 @@ def main_menu():
         [
             [KeyboardButton("💳 Kartalarim"), KeyboardButton("➕ Karta qo'shish")],
             [KeyboardButton("💸 O'tkazma"), KeyboardButton("📋 Tarix")],
+            [KeyboardButton("🔗 Karta ulash"), KeyboardButton("🪪 Mening ID'm")],
         ],
         resize_keyboard=True,
     )

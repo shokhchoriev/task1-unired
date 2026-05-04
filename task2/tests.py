@@ -154,10 +154,10 @@ class TransferRPCUnitTests(TestCase):
         self.assertEqual(payload["state"], Transfer.State.CONFIRMED)
         self.assertEqual(transfer.state, Transfer.State.CONFIRMED)
         self.assertIsNotNone(transfer.confirmed_at)
-        # 100000 - 10 = 99990
-        self.assertEqual(self.sender.balance, Decimal("99990.00"))
-        # 1000 + (10 * 140) = 2400
-        self.assertEqual(self.receiver.balance, Decimal("2400.00"))
+        # Both sides use the real CBU rate stored in transfer.receiving_amount
+        received = transfer.receiving_amount
+        self.assertEqual(self.sender.balance, Decimal("100000.00") - received)
+        self.assertEqual(self.receiver.balance, Decimal("1000.00") + received)
 
     def test_transfer_confirm_wrong_otp_increments_try_count(self):
         transfer_create(
@@ -308,7 +308,7 @@ class TransferRPCIntegrationTests(TestCase):
                 "sender_card_number": self.sender.card_number,
                 "sender_card_expiry": "06/26",
                 "receiver_card_number": self.receiver.card_number,
-                "sending_amount": "5.00",
+                "sending_amount": "3.00",
                 "currency": 840,
             },
         )

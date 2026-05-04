@@ -78,16 +78,69 @@ def check_balance(card, amount):
     return card.balance >= amount
 
 
-def calculate_exchange(amount, currency):
-    rates = {
-        643: Decimal("140"),  # RUB -> UZS
-        840: Decimal("12500"),  # USD -> UZS
-    }
+# ─── CBU exchange rates ───────────────────────────────────────────────────────
 
-    if currency not in rates:
+_FALLBACK_RATES = {
+    643: Decimal("140"),    # RUB
+    840: Decimal("12500"),  # USD
+}
+
+_rate_cache: dict[int, Decimal] = {}
+_cache_expires_at: float = 0.0
+_CBU_URL = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
+_CACHE_TTL = 3600  # seconds
+
+
+def _fetch_cbu_rates() -> dict[int, Decimal]:
+    """Fetch today's rates from cbu.uz; returns {numeric_code: uzs_per_unit}."""
+    try:
+        resp = httpx.get(_CBU_URL, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        rates: dict[int, Decimal] = {}
+        for item in data:
+            try:
+                code = int(item["Code"])
+                rate = Decimal(str(item["Rate"]))
+                nominal = Decimal(str(item.get("Nominal", "1") or "1"))
+                rates[code] = (rate / nominal).quantize(Decimal("0.0001"))
+            except Exception:
+                continue
+        logger.info("[CBU] fetched %d exchange rates", len(rates))
+        return rates
+    except Exception:
+        logger.warning("[CBU] failed to fetch rates, using fallback", exc_info=True)
+        return {}
+
+
+def _get_rate(currency: int) -> Decimal:
+    """Return UZS-per-unit rate for the given ISO numeric currency code."""
+    import time
+
+    global _rate_cache, _cache_expires_at
+
+    if time.time() > _cache_expires_at:
+        fresh = _fetch_cbu_rates()
+        if fresh:
+            _rate_cache = fresh
+            _cache_expires_at = time.time() + _CACHE_TTL
+
+    if currency in _rate_cache:
+        return _rate_cache[currency]
+
+    if currency in _FALLBACK_RATES:
+        logger.warning("[CBU] rate not found for %s, using fallback", currency)
+        return _FALLBACK_RATES[currency]
+
+    raise ValueError(f"Currency {currency} not allowed")
+
+
+def calculate_exchange(amount: Decimal, currency: int) -> Decimal:
+    """Return the UZS equivalent of `amount` units of `currency`."""
+    if currency not in {643, 840}:
         raise ValueError("Currency not allowed")
-
-    return amount * rates[currency]
+    rate = _get_rate(currency)
+    return (amount * rate).quantize(Decimal("0.01"))
 
 
 def get_transfer_by_ext_id(ext_id):

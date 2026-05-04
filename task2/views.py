@@ -120,10 +120,10 @@ def transfer_create(
         except Card.DoesNotExist:
             return get_error(ERR_UNKNOWN)
 
-        if sender_card.balance < amount:
-            return get_error(ERR_BALANCE_NOT_ENOUGH)
-
         receiving_amount = calculate_exchange(amount=amount, currency=currency)
+
+        if sender_card.balance < receiving_amount:
+            return get_error(ERR_BALANCE_NOT_ENOUGH)
         otp = generate_otp()
 
         transfer = Transfer.objects.create(
@@ -201,10 +201,10 @@ def transfer_confirm(ext_id, otp) -> Result:
                     card_number=transfer.receiver_card_number
                 )
 
-                if sender_card.balance < transfer.sending_amount:
+                if sender_card.balance < transfer.receiving_amount:
                     return get_error(ERR_BALANCE_NOT_ENOUGH)
 
-                sender_card.balance -= transfer.sending_amount
+                sender_card.balance -= transfer.receiving_amount
                 receiver_card.balance += transfer.receiving_amount
                 sender_card.save(update_fields=["balance"])
                 receiver_card.save(update_fields=["balance"])

@@ -81,5 +81,24 @@ def get_user_history(tg_id, limit=10):
     )
 
 
+@sync_to_async
+def link_card_to_tg(tg_id, card_number, expire_raw):
+    from cards.models import Card
+    from cards.utils import format_expire
+    try:
+        normalized = format_expire(expire_raw)
+    except Exception:
+        return None, "Muddat noto'g'ri formatda. MM/YY shaklida kiriting."
+
+    try:
+        card = Card.objects.get(card_number=card_number, expire=normalized)
+    except Card.DoesNotExist:
+        return None, "Karta topilmadi. Raqam yoki muddat noto'g'ri."
+
+    card.tg_id = str(tg_id)
+    card.save(update_fields=["tg_id"])
+    return card, None
+
+
 def make_ext_id(tg_id):
     return f"tg-{tg_id}-{int(time.time())}"
