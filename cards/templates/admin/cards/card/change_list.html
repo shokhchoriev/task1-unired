@@ -1,8 +1,35 @@
 {% extends "admin/change_list.html" %}
 
-{% block object-tools-items %}
-<li>
-    <a href="{{ import_excel_url }}">Import Excel/CSV</a>
-</li>
+{% block content %}
+<style>
+.custom-admin-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.custom-admin-toolbar a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.92rem;
+    white-space: nowrap;
+    transition: background 0.2s ease;
+}
+.custom-admin-toolbar a:hover {
+    background: rgba(255,255,255,0.18);
+}
+</style>
+<div class="custom-admin-toolbar">
+    <a href="?phone_998=yes">SHOW +998 CARDS</a>
+    <a href="?balance_gt_100=yes">SHOW BALANCE > 100</a>
+    <a href="?top_transactions=top5">SHOW TOP 5 CARDS</a>
+    <a href="{{ import_excel_url }}{% if current_query_string %}?{{ current_query_string }}{% endif %}">IMPORT EXCEL/CSV</a>
+</div>
 {{ block.super }}
 {% endblock %}
