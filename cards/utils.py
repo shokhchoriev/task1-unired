@@ -56,7 +56,11 @@ def format_phone(raw_phone):
 
 
 def human_phone(phone):
-    normalized = format_phone(phone)
+    try:
+        normalized = format_phone(phone)
+    except ValidationError:
+        return str(phone).strip() if not _is_empty(phone) else "-"
+
     if not normalized:
         return "-"
 
@@ -65,7 +69,11 @@ def human_phone(phone):
 
 
 def phone_mask(phone):
-    normalized = format_phone(phone)
+    try:
+        normalized = format_phone(phone)
+    except ValidationError:
+        return str(phone).strip() if not _is_empty(phone) else "-"
+
     if not normalized:
         return "-"
 

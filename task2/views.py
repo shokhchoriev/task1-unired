@@ -20,6 +20,9 @@ from .utils import (
     generate_otp,
     get_transfer_by_ext_id,
 )
+# utils.py dan dekoratorni import qilish qismini qo'shdik
+from .utils import FakeNotificationService, calculate_exchange, generate_otp, log_transfer_method
+
 
 logger = logging.getLogger(__name__)
 request_logger = logging.getLogger("task2.request")
@@ -69,6 +72,8 @@ def _normalize_expiry(expiry_str):
 
 
 @method(name="transfer.create")
+@method
+@log_transfer_method  # LOGGING CREATE
 def transfer_create(
     ext_id,
     sender_card_number,
@@ -157,6 +162,8 @@ def transfer_create(
 
 
 @method(name="transfer.confirm")
+@method
+@log_transfer_method  # LOGGING CONFIRM
 def transfer_confirm(ext_id, otp) -> Result:
     try:
         request_logger.info("transfer.confirm: ext_id=%s", ext_id)
@@ -230,6 +237,8 @@ def transfer_confirm(ext_id, otp) -> Result:
 
 
 @method(name="transfer.cancel")
+@method
+@log_transfer_method  # LOGGING CANCEL
 def transfer_cancel(ext_id) -> Result:
     try:
         request_logger.info("transfer.cancel: ext_id=%s", ext_id)
@@ -255,6 +264,17 @@ def transfer_cancel(ext_id) -> Result:
         error_logger.exception("transfer.cancel failed: ext_id=%s", ext_id)
         return get_error(ERR_UNKNOWN)
 
+    if card_number:
+        queryset = queryset.filter(sender_card_number=card_number)
+    if status:
+        queryset = queryset.filter(state=status)
+    if date_from:
+        queryset = queryset.filter(created_at__gte=datetime.fromisoformat(date_from))
+    if date_to:
+        queryset = queryset.filter(created_at__lte=datetime.fromisoformat(date_to))
+
+    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in queryset]
+    return Success(data)
 
 @method(name="transfer.state")
 def transfer_state(ext_id) -> Result:
@@ -331,4 +351,22 @@ def json_rpc_view(request):
     if response is None:
         return HttpResponse(status=204)
 
+    return JsonResponse(response, safe=False)
+@csrf_exempt
+def json_rpc_view(request):
+    # REQUEST IP MANZILNI ANIQLASH QISMI
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+
+    request_data = request.body.decode("utf-8")
+    
+    # IP log
+    logger.info(f"IP: {ip} | Request: {request_data}")
+    
+    response = dispatch(request_data)
+    
+    logger.info(f"Response: {response}")
     return JsonResponse(response, safe=False)
