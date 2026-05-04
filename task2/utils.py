@@ -1,8 +1,53 @@
 import logging
 import random
 from decimal import Decimal
+import time
+import functools
+import functools
 
+from decimal import Decimal, InvalidOperation
 from .models import Transfer
+
+
+
+
+request_logger = logging.getLogger("task2.request")
+
+def log_transfer_method(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        request_payload = {"args": args, "kwargs": kwargs}
+        
+        try:
+            response = func(*args, **kwargs)
+            status = "SUCCESS"
+        except Exception as e:
+            response = {"error": str(e)}
+            status = "ERROR"
+            raise e
+        finally:
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            log_entry = (
+                f"Method: {func.__name__} | Status: {status} | "
+                f"Payload: {request_payload} | Response: {response} | "
+                f"Time: {processing_time:.4f}s"
+            )
+            request_logger.info(log_entry)
+            
+        return response
+    return wrapper
+
+def _parse_amount(value):
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return None
+    if amount <= 0:
+        return None
+    return amount.quantize(Decimal("0.01"))
 
 
 logger = logging.getLogger(__name__)
@@ -91,3 +136,49 @@ def check_otp(transfer, otp):
         raise Exception(f"Noto‘g‘ri OTP, yana {3 - transfer.try_count} urinish qoldi")
 
     return True
+
+
+
+
+import time
+import functools
+import logging
+from decimal import Decimal, InvalidOperation
+
+request_logger = logging.getLogger("task2.request")
+
+def log_transfer_method(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        request_payload = {"args": args, "kwargs": kwargs}
+        
+        try:
+            response = func(*args, **kwargs)
+            status = "SUCCESS"
+        except Exception as e:
+            response = {"error": str(e)}
+            status = "ERROR"
+            raise e
+        finally:
+            end_time = time.time()
+            processing_time = end_time - start_time
+            
+            log_entry = (
+                f"Method: {func.__name__} | Status: {status} | "
+                f"Payload: {request_payload} | Response: {response} | "
+                f"Time: {processing_time:.4f}s"
+            )
+            request_logger.info(log_entry)
+            
+        return response
+    return wrapper
+
+def _parse_amount(value):
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return None
+    if amount <= 0:
+        return None
+    return amount.quantize(Decimal("0.01"))
