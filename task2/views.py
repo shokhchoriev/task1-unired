@@ -12,7 +12,8 @@ from jsonrpcserver import Result, Success, dispatch, method
 from cards.models import Card
 
 from .models import Error, Transfer
-from .utils import FakeNotificationService, calculate_exchange, generate_otp
+# utils.py dan dekoratorni import qilish qismini qo'shdik
+from .utils import FakeNotificationService, calculate_exchange, generate_otp, log_transfer_method
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ def _parse_amount(value):
 
 
 @method
+@log_transfer_method  # LOGGING CREATE
 def transfer_create(
     ext_id,
     sender_card_number,
@@ -106,6 +108,7 @@ def transfer_create(
 
 
 @method
+@log_transfer_method  # LOGGING CONFIRM
 def transfer_confirm(ext_id, otp) -> Result:
     try:
         transfer = Transfer.objects.get(ext_id=ext_id)
@@ -160,6 +163,7 @@ def transfer_confirm(ext_id, otp) -> Result:
 
 
 @method
+@log_transfer_method  # LOGGING CANCEL
 def transfer_cancel(ext_id) -> Result:
     try:
         transfer = Transfer.objects.get(ext_id=ext_id)
@@ -193,19 +197,25 @@ def transfer_history(card_number=None, status=None, date_from=None, date_to=None
     if date_from:
         queryset = queryset.filter(created_at__gte=datetime.fromisoformat(date_from))
     if date_to:
-        filters['created_at_lte'] = datetime.fromisoformat(date_to)
+        queryset = queryset.filter(created_at__lte=datetime.fromisoformat(date_to))
 
-    transfers = Transfer.objects.filter(**filters)
-    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in transfers]
+    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in queryset]
     return Success(data)
-
-
 
 
 @csrf_exempt
 def json_rpc_view(request):
+    # REQUEST IP MANZILNI ANIQLASH QISMI
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+
     request_data = request.body.decode("utf-8")
-    logger.info(f"Request: {request_data}")
+    
+    # IP log
+    logger.info(f"IP: {ip} | Request: {request_data}")
     
     response = dispatch(request_data)
     
