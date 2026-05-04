@@ -1,4 +1,10 @@
 from django.urls import path
+
+from .views import json_rpc_view
+
+urlpatterns = [
+    path("api/v1/rpc/", json_rpc_view, name="json_rpc"),
+]
 from .views import json_rpc_view, transfer_create, transfer_confirm, transfer_cancel, transfer_state, transfer_history
 from .utils import log_transfer_method
 

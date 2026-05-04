@@ -1,0 +1,267 @@
+{
+  "info": {
+    "_postman_id": "task2-transfer-rpc-collection",
+    "name": "Task 2 – Transfer JSON-RPC API",
+    "description": "JSON-RPC 2.0 endpoints for the Transfer microservice. Base URL: http://localhost:8000/task2/api/v1/rpc/",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/task2/api/v1/rpc/",
+      "type": "string"
+    },
+    {
+      "key": "ext_id",
+      "value": "tr-00000001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "transfer.create",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.create\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"sender_card_number\": \"8600123412341234\",\n    \"sender_card_expiry\": \"12/26\",\n    \"receiver_card_number\": \"8600567812345678\",\n    \"sending_amount\": 15000,\n    \"currency\": 643\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Start a transfer request. Validates sender card (number + expiry + active + balance), receiver card, currency (643=RUB, 840=USD), then generates and sends a 6-digit OTP via Telegram.\n\nReturns ext_id, state=created, otp_sent=true on success."
+      },
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": {\n    \"ext_id\": \"tr-00000001\",\n    \"state\": \"created\",\n    \"otp_sent\": true\n  }\n}"
+        },
+        {
+          "name": "Error – ext_id already exists",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": {\n    \"code\": 32701,\n    \"message\": \"Ext id already exists\"\n  }\n}"
+        },
+        {
+          "name": "Error – balance not enough",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": {\n    \"code\": 32702,\n    \"message\": \"Balance is not enough\"\n  }\n}"
+        },
+        {
+          "name": "Error – card expiry invalid",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": {\n    \"code\": 32704,\n    \"message\": \"Card expiry is not valid\"\n  }\n}"
+        },
+        {
+          "name": "Error – currency not allowed",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": {\n    \"code\": 32707,\n    \"message\": \"Currency not allowed except 860, 643, 840\"\n  }\n}"
+        }
+      ]
+    },
+    {
+      "name": "transfer.confirm",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"transfer.confirm\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"otp\": \"123456\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Confirm a transfer with the OTP that was sent during transfer.create.\n\n- Correct OTP: state → confirmed, balances updated atomically.\n- Wrong OTP: try_count++, returns error 32712 with remaining attempts.\n- 3rd wrong attempt: transfer auto-cancelled, returns error 32711."
+      },
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"result\": {\n    \"ext_id\": \"tr-00000001\",\n    \"state\": \"confirmed\"\n  }\n}"
+        },
+        {
+          "name": "Error – OTP wrong (2 attempts left)",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"error\": {\n    \"code\": 32712,\n    \"message\": \"OTP is wrong, left try count is 2\"\n  }\n}"
+        },
+        {
+          "name": "Error – try count reached (transfer cancelled)",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"error\": {\n    \"code\": 32711,\n    \"message\": \"Count of try is reached\"\n  }\n}"
+        },
+        {
+          "name": "Error – OTP expired (wrong state)",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"error\": {\n    \"code\": 32710,\n    \"message\": \"OTP expired\"\n  }\n}"
+        }
+      ]
+    },
+    {
+      "name": "transfer.cancel",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"transfer.cancel\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Cancel a transfer that is in the 'created' state. Sets state → cancelled and records cancelled_at timestamp."
+      },
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"result\": {\n    \"state\": \"cancelled\"\n  }\n}"
+        },
+        {
+          "name": "Error – not found or wrong state",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"error\": {\n    \"code\": 32706,\n    \"message\": \"Transfer cannot be cancelled in current state\"\n  }\n}"
+        }
+      ]
+    },
+    {
+      "name": "transfer.state",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"transfer.state\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Return the current state of a transfer by its ext_id."
+      },
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"result\": {\n    \"ext_id\": \"tr-00000001\",\n    \"state\": \"confirmed\"\n  }\n}"
+        },
+        {
+          "name": "Error – not found",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"error\": {\n    \"code\": 32706,\n    \"message\": \"Unknown error occurred\"\n  }\n}"
+        }
+      ]
+    },
+    {
+      "name": "transfer.history",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"transfer.history\",\n  \"params\": {\n    \"card_number\": \"8600123412341234\",\n    \"start_date\": \"2025-04-01\",\n    \"end_date\": \"2025-04-30\",\n    \"status\": \"confirmed\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}",
+          "host": ["{{base_url}}"]
+        },
+        "description": "Return transfers filtered by card number (sender OR receiver), date range (start_date/end_date in YYYY-MM-DD), and status (created/confirmed/cancelled). All parameters are optional."
+      },
+      "response": [
+        {
+          "name": "Success – with results",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"result\": [\n    {\n      \"ext_id\": \"tr-001\",\n      \"sending_amount\": \"150000.00\",\n      \"state\": \"confirmed\",\n      \"created_at\": \"2025-04-10T08:30:00\"\n    },\n    {\n      \"ext_id\": \"tr-002\",\n      \"sending_amount\": \"25000.00\",\n      \"state\": \"confirmed\",\n      \"created_at\": \"2025-04-05T14:15:00\"\n    }\n  ]\n}"
+        },
+        {
+          "name": "Success – empty list",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"result\": []\n}"
+        }
+      ]
+    }
+  ]
+}
