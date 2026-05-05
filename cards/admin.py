@@ -1,4 +1,3 @@
-import csv
 from django import forms
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
@@ -6,6 +5,7 @@ from django.http import HttpResponse
 from django.shortcuts import render, redirect
 from django.urls import path, reverse
 from django.db import connection
+from openpyxl import Workbook
 
 from .models import Card
 from .services import import_cards_from_excel
@@ -16,29 +16,42 @@ class ExcelImportForm(forms.Form):
     file = forms.FileField()
 
 
-class PhoneStartsWith998Filter(admin.SimpleListFilter):
-    title = "Phone"
-    parameter_name = "phone_998"
+class PhoneUcellFilter(admin.SimpleListFilter):
+    title = "Phone +99850"
+    parameter_name = "phone_ucell"
 
     def lookups(self, request, model_admin):
-        return (("yes", "+998 only"),)
+        return (("yes", "+99850 (Ucell)"),)
 
     def queryset(self, request, queryset):
         if self.value() == "yes":
-            return queryset.filter(phone__startswith="+998")
+            return queryset.filter(phone__startswith="+99850")
         return queryset
 
 
-class BalanceGreaterThan100Filter(admin.SimpleListFilter):
-    title = "Balance > 100"
-    parameter_name = "balance_gt_100"
+class BalanceGreaterThan1000Filter(admin.SimpleListFilter):
+    title = "Balance > 1000"
+    parameter_name = "balance_gt_1000"
 
     def lookups(self, request, model_admin):
-        return (("yes", "100 dan yuqori"),)
+        return (("yes", "1000 dan yuqori"),)
 
     def queryset(self, request, queryset):
         if self.value() == "yes":
-            return queryset.filter(balance__gt=100)
+            return queryset.filter(balance__gt=1000)
+        return queryset
+
+
+class BalanceLessThan1000Filter(admin.SimpleListFilter):
+    title = "Balance < 1000"
+    parameter_name = "balance_lt_1000"
+
+    def lookups(self, request, model_admin):
+        return (("yes", "1000 dan past"),)
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(balance__lt=1000)
         return queryset
 
 
@@ -101,8 +114,9 @@ class CardAdmin(admin.ModelAdmin):
     list_filter = (
         "status",
         "expire",
-        PhoneStartsWith998Filter,
-        BalanceGreaterThan100Filter,
+        PhoneUcellFilter,
+        BalanceGreaterThan1000Filter,
+        BalanceLessThan1000Filter,
         RichestCardsFilter,
         TopTransactionsFilter,
     )
@@ -136,9 +150,9 @@ class CardAdmin(admin.ModelAdmin):
                 name="cards_card_import_excel",
             ),
             path(
-                "export-csv/",
-                self.admin_site.admin_view(self.export_csv),
-                name="cards_card_export_csv",
+                "export-xlsx/",
+                self.admin_site.admin_view(self.export_xlsx),
+                name="cards_card_export_xlsx",
             ),
         ]
         return custom_urls + urls
@@ -147,44 +161,61 @@ class CardAdmin(admin.ModelAdmin):
         cl = self.get_changelist_instance(request)
         return cl.get_queryset(request)
 
-    def export_csv(self, request):
+    def export_xlsx(self, request):
         queryset = self.get_filtered_queryset(request)
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = "attachment; filename=cards_export.csv"
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = "attachment; filename=cards_export.xlsx"
 
-        writer = csv.writer(response)
-        writer.writerow(["card_number", "expire", "phone", "status", "balance"])
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Cards"
+        sheet.append(["card_number", "expire", "phone", "status", "balance"])
+
         for card in queryset.order_by("card_number"):
-            writer.writerow([
+            sheet.append([
                 human_card(card.card_number),
-                card.expire,
-                card.phone,
+                str(card.expire),
+                card.phone or "",
                 card.status,
                 f"{card.balance:.2f}",
             ])
+
+        workbook.save(response)
         return response
 
     def export_selected_cards(self, request, queryset):
         if not queryset.exists():
+            queryset = self.get_filtered_queryset(request)
+
+        if not queryset.exists():
             self.message_user(request, "Hech qanday karta tanlanmadi.", level=messages.WARNING)
             return
 
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = "attachment; filename=selected_cards_export.csv"
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = "attachment; filename=selected_cards_export.xlsx"
 
-        writer = csv.writer(response)
-        writer.writerow(["card_number", "expire", "phone", "status", "balance"])
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Selected Cards"
+        sheet.append(["card_number", "expire", "phone", "status", "balance"])
+
         for card in queryset.order_by("card_number"):
-            writer.writerow([
+            sheet.append([
                 human_card(card.card_number),
-                card.expire,
-                card.phone,
+                str(card.expire),
+                card.phone or "",
                 card.status,
                 f"{card.balance:.2f}",
             ])
+
+        workbook.save(response)
         return response
 
-    export_selected_cards.short_description = "Export selected cards to CSV"
+    export_selected_cards.short_description = "Export selected or filtered cards to Excel"
 
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
@@ -203,8 +234,17 @@ class CardAdmin(admin.ModelAdmin):
                 extra_context['duplicate_cards_count'] = cursor.fetchone()[0]
 
                 # 2. Unikal jo'natuvchilar (sender_card_number)
-                cursor.execute("SELECT COUNT(DISTINCT sender_card_number) FROM task2_transfer")
-                extra_context['unique_senders_count'] = cursor.fetchone()[0]
+                cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT card_number) FROM (
+                        SELECT sender_card_number AS card_number FROM task2_transfer
+                        UNION
+                        SELECT receiver_card_number AS card_number FROM task2_transfer
+                    ) AS all_cards
+                    """
+                )
+                extra_context['unique_transfer_cards_count'] = cursor.fetchone()[0]
+                extra_context['unique_senders_count'] = extra_context['unique_transfer_cards_count']
 
                 # 3. Ishlatilmagan kartalar (Transferda qatnashmaganlar)
                 cursor.execute("""
@@ -229,13 +269,15 @@ class CardAdmin(admin.ModelAdmin):
             pass
 
         extra_context["import_excel_url"] = reverse("admin:cards_card_import_excel")
-        extra_context["export_csv_url"] = reverse("admin:cards_card_export_csv")
+        extra_context["export_csv_url"] = reverse("admin:cards_card_export_xlsx")
         extra_context["all_cards_url"] = reverse("admin:cards_card_changelist")
         
         return super().changelist_view(request, extra_context=extra_context)
 
     def get_import_filter(self, request):
-        phone_998 = request.GET.get("phone_998")
+        phone_ucell = request.GET.get("phone_ucell")
+        balance_gt_1000 = request.GET.get("balance_gt_1000")
+        balance_lt_1000 = request.GET.get("balance_lt_1000")
         balance_range = request.GET.get("balance_range")
         status_exact = request.GET.get("status__exact")
         expire_exact = request.GET.get("expire__exact")
@@ -270,8 +312,14 @@ class CardAdmin(admin.ModelAdmin):
                 top5_card_numbers = []
 
         def row_filter(row):
-            if phone_998 == "yes" and not str(row.get("phone", "")).startswith("+998"):
+            if phone_ucell == "yes" and not str(row.get("phone", "")).startswith("+99850"):
                 return False
+            if balance_gt_1000 == "yes" and row.get("balance") is not None:
+                if row["balance"] <= 1000:
+                    return False
+            if balance_lt_1000 == "yes" and row.get("balance") is not None:
+                if row["balance"] >= 1000:
+                    return False
             if balance_range == "gt_100" and row.get("balance") is not None:
                 if row["balance"] <= 100:
                     return False

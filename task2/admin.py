@@ -1,5 +1,7 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.http import HttpResponse
 from django.utils.html import format_html
+from openpyxl import Workbook
 
 from .models import Error, Transfer
 
@@ -19,6 +21,7 @@ class TransferAdmin(admin.ModelAdmin):
     ordering = ("-created_at",)
     list_per_page = 50
     save_on_top = True
+    actions = ["export_selected_transfers"]
 
     list_display = (
         "ext_id",
@@ -91,6 +94,53 @@ class TransferAdmin(admin.ModelAdmin):
     @admin.display(description="Receiver Card", ordering="receiver_card_number")
     def receiver_card_masked(self, obj):
         return _mask_card_number(obj.receiver_card_number)
+
+    def export_selected_transfers(self, request, queryset):
+        if not queryset.exists():
+            self.message_user(request, "Hech qanday transfer tanlanmadi.", level=messages.WARNING)
+            return
+
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = "attachment; filename=selected_transfers_export.xlsx"
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Transfers"
+        sheet.append([
+            "ext_id",
+            "state",
+            "currency",
+            "sending_amount",
+            "receiving_amount",
+            "sender_card_number",
+            "receiver_card_number",
+            "sender_phone",
+            "receiver_phone",
+            "try_count",
+            "created_at",
+        ])
+
+        for transfer in queryset.order_by("-created_at"):
+            sheet.append([
+                transfer.ext_id,
+                transfer.get_state_display(),
+                transfer.currency,
+                str(transfer.sending_amount),
+                str(transfer.receiving_amount),
+                transfer.sender_card_number,
+                transfer.receiver_card_number,
+                transfer.sender_phone,
+                transfer.receiver_phone,
+                transfer.try_count,
+                transfer.created_at,
+            ])
+
+        workbook.save(response)
+        return response
+
+    export_selected_transfers.short_description = "Export selected transfers to Excel"
 
 
 @admin.register(Error)

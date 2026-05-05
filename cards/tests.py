@@ -4,6 +4,7 @@ import tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase
+from openpyxl import load_workbook
 
 from .models import Card
 from .services import import_cards_from_excel
@@ -53,13 +54,15 @@ class CommandsTests(TestCase):
         )
 
     def test_export_cards_command(self):
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
             output_path = tmp.name
 
         try:
             call_command("export_cards", "--status", "active", "--output", output_path)
-            with open(output_path, "r", encoding="utf-8") as file_obj:
-                content = file_obj.read()
-            self.assertIn("8600 1234 5678 9012", content)
+            workbook = load_workbook(output_path)
+            sheet = workbook.active
+            rows = list(sheet.values)
+            self.assertIn(("card_number", "expire", "phone", "status", "balance"), rows)
+            self.assertTrue(any("8600 1234 5678 9012" in str(cell) for row in rows for cell in row if cell))
         finally:
             os.remove(output_path)
