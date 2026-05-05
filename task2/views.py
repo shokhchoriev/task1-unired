@@ -263,7 +263,6 @@ def transfer_cancel(ext_id) -> Result:
     except Exception:
         error_logger.exception("transfer.cancel failed: ext_id=%s", ext_id)
         return get_error(ERR_UNKNOWN)
-
     if card_number:
         queryset = queryset.filter(sender_card_number=card_number)
     if status:
