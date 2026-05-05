@@ -9,7 +9,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from jsonrpcserver import Error as RPCError
-from jsonrpcserver import Result, Success, dispatch_to_serializable, method
+from jsonrpcserver import Result, Success, dispatch_to_serializable, method, dispatch
 
 from cards.models import Card
 from cards.utils import format_expire
@@ -72,7 +72,6 @@ def _normalize_expiry(expiry_str):
 
 
 @method(name="transfer.create")
-@method
 @log_transfer_method  # LOGGING CREATE
 def transfer_create(
     ext_id,
@@ -162,7 +161,6 @@ def transfer_create(
 
 
 @method(name="transfer.confirm")
-@method
 @log_transfer_method  # LOGGING CONFIRM
 def transfer_confirm(ext_id, otp) -> Result:
     try:
@@ -237,7 +235,6 @@ def transfer_confirm(ext_id, otp) -> Result:
 
 
 @method(name="transfer.cancel")
-@method
 @log_transfer_method  # LOGGING CANCEL
 def transfer_cancel(ext_id) -> Result:
     try:
@@ -263,18 +260,7 @@ def transfer_cancel(ext_id) -> Result:
     except Exception:
         error_logger.exception("transfer.cancel failed: ext_id=%s", ext_id)
         return get_error(ERR_UNKNOWN)
-    if card_number:
-        queryset = queryset.filter(sender_card_number=card_number)
-    if status:
-        queryset = queryset.filter(state=status)
-    if date_from:
-        queryset = queryset.filter(created_at__gte=datetime.fromisoformat(date_from))
-    if date_to:
-        queryset = queryset.filter(created_at__lte=datetime.fromisoformat(date_to))
-
-    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in queryset]
-    return Success(data)
-
+    
 @method(name="transfer.state")
 def transfer_state(ext_id) -> Result:
     try:
@@ -351,6 +337,8 @@ def json_rpc_view(request):
         return HttpResponse(status=204)
 
     return JsonResponse(response, safe=False)
+
+
 @csrf_exempt
 def json_rpc_view(request):
     # REQUEST IP MANZILNI ANIQLASH QISMI
