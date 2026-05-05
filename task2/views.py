@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
@@ -19,9 +20,8 @@ from .utils import (
     calculate_exchange,
     generate_otp,
     get_transfer_by_ext_id,
+    log_transfer_method,
 )
-# utils.py dan dekoratorni import qilish qismini qo'shdik
-from .utils import FakeNotificationService, calculate_exchange, generate_otp, log_transfer_method
 
 
 logger = logging.getLogger(__name__)
@@ -369,3 +369,76 @@ def json_rpc_view(request):
     
     logger.info(f"Response: {response}")
     return JsonResponse(response, safe=False)
+
+
+# ─── 3.4 Caching: card.info ───────────────────────────────────────────────────
+# Nima uchun cache kerak:
+#   Har bir so'rovda DB ga murojaat qilish o'rniga, birinchi so'rovda natija
+#   Redis da 30 soniya saqlanadi. Keyingi so'rovlar DB ni yuklamasdan
+#   to'g'ridan-to'g'ri Redis dan javob oladi. Bu DB load ni keskin kamaytiradi.
+
+CARD_INFO_CACHE_TTL = 30  # soniya
+
+
+def _get_error_cached(code, override_message=None):
+    """
+    Error modelini har safar DB dan o'qish o'rniga 5 daqiqaga cache qiladi.
+    Bu jadval o'zgarmasligi sababli DB bosimini kamaytiradi.
+    """
+    cache_key = f"error_msg:{code}"
+    err = cache.get(cache_key)
+    if err is None:
+        try:
+            err = Error.objects.get(code=code)
+            cache.set(cache_key, {"code": err.code, "en": err.en}, timeout=300)
+        except Error.DoesNotExist:
+            return RPCError(code=code, message=override_message or "Unknown error")
+    else:
+        # cache dan kelgan dict
+        if isinstance(err, dict):
+            err_code = err["code"]
+            err_msg = override_message if override_message is not None else err["en"]
+            return RPCError(code=err_code, message=err_msg)
+
+    message = override_message if override_message is not None else err.en
+    return RPCError(code=err.code, message=message)
+
+
+@method(name="card.info")
+def card_info(card_number: str, expiry: str) -> Result:
+    """
+    Karta ma'lumotlarini qaytaradi. Natija 30 soniyaga Redis da saqlanadi.
+
+    Params:
+        card_number — 16 ta raqamli karta raqami
+        expiry      — MM/YY yoki YYYY-MM formatida muddati
+
+    Response:
+        card_status, balance, phone, masked_card
+    """
+    cache_key = f"card_info:{card_number}:{expiry}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Success(cached)
+
+    normalized = _normalize_expiry(expiry)
+    if normalized is None:
+        return _get_error_cached(ERR_CARD_EXPIRY_INVALID)
+
+    try:
+        card = Card.objects.get(card_number=card_number, expire=normalized)
+    except Card.DoesNotExist:
+        return _get_error_cached(ERR_CARD_EXPIRY_INVALID)
+
+    # Masked card: dastlabki 6 va oxirgi 4 ta ko'rinadi, o'rtasi yulduzcha
+    masked = card_number[:6] + "*" * (len(card_number) - 10) + card_number[-4:]
+
+    data = {
+        "card_status": card.status,
+        "balance": str(card.balance),
+        "phone": card.phone,
+        "masked_card": masked,
+    }
+
+    cache.set(cache_key, data, timeout=CARD_INFO_CACHE_TTL)
+    return Success(data)

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -112,6 +113,41 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8755117994:AAHEigraYmQ4EkeZm8GDXHg0a6kJsWR56co")
 
+# Telegram report chat ID – set via env in production
+TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "")
+
+
+# ─── Redis ────────────────────────────────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+# ─── Celery ───────────────────────────────────────────────────────────────────
+CELERY_BROKER_URL = REDIS_URL + "/0"
+CELERY_RESULT_BACKEND = REDIS_URL + "/0"
+CELERY_TIMEZONE = "Asia/Tashkent"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+
+# crontab schedules — 3600 = har soatda, 86400 = har kunda
+CELERY_BEAT_SCHEDULE = {
+    # Har soatda statistika yuborish (soat boshida)
+    "hourly-telegram-report": {
+        "task": "task2.tasks.send_hourly_report",
+        "schedule": 3600,
+    },
+    # Har kuni soat 08:00 da (Tashkent vaqti) statistika yuborish
+    "daily-telegram-report": {
+        "task": "task2.tasks.send_daily_report",
+        "schedule": 86400,
+    },
+}
+
+# ─── Cache (Redis) ────────────────────────────────────────────────────────────
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL + "/1",
+    }
+}
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
