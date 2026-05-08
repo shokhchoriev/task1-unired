@@ -3,12 +3,12 @@ import logging
 import httpx
 from celery import shared_task
 from django.conf import settings
+from django.db.models import Sum, Count
 
 logger = logging.getLogger(__name__)
 
 
 def _send_telegram_report(message: str) -> bool:
-    """Send a message to the configured report chat via Telegram Bot API."""
     token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
     chat_id = getattr(settings, "TELEGRAM_REPORT_CHAT_ID", "")
 
@@ -38,31 +38,55 @@ def _build_stats_message(title: str) -> str:
     from cards.models import Card
     from task2.models import Transfer
 
-    card_count = Card.objects.count()
-    transfer_count = Transfer.objects.count()
-    confirmed = Transfer.objects.filter(state=Transfer.State.CONFIRMED).count()
-    cancelled = Transfer.objects.filter(state=Transfer.State.CANCELLED).count()
-    created = Transfer.objects.filter(state=Transfer.State.CREATED).count()
+    # ── Kartalar statistikasi ──────────────────────────────────────────────
+    card_total   = Card.objects.count()
+    card_active  = Card.objects.filter(status="active").count()
+    card_inactive = Card.objects.filter(status="inactive").count()
+    card_expired = Card.objects.filter(status="expired").count()
+    total_balance = Card.objects.aggregate(s=Sum("balance"))["s"] or 0
+
+    # ── O'tkazmalar statistikasi ───────────────────────────────────────────
+    transfer_total     = Transfer.objects.count()
+    confirmed_count    = Transfer.objects.filter(state=Transfer.State.CONFIRMED).count()
+    cancelled_count    = Transfer.objects.filter(state=Transfer.State.CANCELLED).count()
+    pending_count      = Transfer.objects.filter(state=Transfer.State.CREATED).count()
+
+    confirmed_amount   = Transfer.objects.filter(
+        state=Transfer.State.CONFIRMED
+    ).aggregate(s=Sum("receiving_amount"))["s"] or 0
+
+    pending_amount     = Transfer.objects.filter(
+        state=Transfer.State.CREATED
+    ).aggregate(s=Sum("sending_amount"))["s"] or 0
 
     return (
-        f"<b>{title}</b>\n\n"
-        f"💳 Jami kartalar: <b>{card_count}</b>\n"
-        f"🔄 Jami o'tkazmalar: <b>{transfer_count}</b>\n"
-        f"  ✅ Tasdiqlangan: <b>{confirmed}</b>\n"
-        f"  ❌ Bekor qilingan: <b>{cancelled}</b>\n"
-        f"  ⏳ Kutilmoqda: <b>{created}</b>"
+        f"<b>{title}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        f"💳 <b>KARTALAR</b>\n"
+        f"  Jami: <b>{card_total}</b>\n"
+        f"  ✅ Aktiv: <b>{card_active}</b>\n"
+        f"  ⏸ Nofaol: <b>{card_inactive}</b>\n"
+        f"  ❌ Muddati o'tgan: <b>{card_expired}</b>\n"
+        f"  💰 Umumiy balans: <b>{total_balance:,.2f} UZS</b>\n\n"
+
+        f"🔄 <b>O'TKAZMALAR</b>\n"
+        f"  Jami: <b>{transfer_total}</b>\n"
+        f"  ✅ Tasdiqlangan: <b>{confirmed_count}</b> "
+        f"→ <b>{confirmed_amount:,.2f} UZS</b>\n"
+        f"  ⏳ Kutilmoqda: <b>{pending_count}</b> "
+        f"→ <b>{pending_amount:,.2f} UZS</b>\n"
+        f"  ❌ Bekor qilingan: <b>{cancelled_count}</b>"
     )
 
 
 @shared_task(name="task2.tasks.send_hourly_report")
 def send_hourly_report():
-    """Har soatda Telegram ga statistika yuboradi."""
     message = _build_stats_message("📊 Soatlik hisobot")
     _send_telegram_report(message)
 
 
 @shared_task(name="task2.tasks.send_daily_report")
 def send_daily_report():
-    """Har kuni Telegram ga statistika yuboradi."""
     message = _build_stats_message("📈 Kunlik hisobot")
     _send_telegram_report(message)

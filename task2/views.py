@@ -365,7 +365,7 @@ def json_rpc_view(request):
     # IP log
     logger.info(f"IP: {ip} | Request: {request_data}")
     
-    response = dispatch(request_data)
+    response = dispatch_to_serializable(request_data)
     
     logger.info(f"Response: {response}")
     return JsonResponse(response, safe=False)
