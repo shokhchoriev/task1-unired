@@ -81,6 +81,48 @@ def transfer_create(
     sending_amount,
     currency,
 ) -> Result:
+    """
+    Creates a money transfer between two bank cards.
+
+    Purpose:
+        This function validates card information, checks balance,
+        creates a transfer request, and sends an OTP code to confirm
+        the transaction.
+
+    Parameters:
+        ext_id:
+            Unique external transaction ID.
+
+        sender_card_number:
+            Sender's card number.
+
+        sender_card_expiry:
+            Sender card expiry date in MM/YY or YYYY-MM format.
+
+        receiver_card_number:
+            Receiver's card number.
+
+        sending_amount:
+            Amount of money to transfer.
+
+        currency:
+            Currency code of the transfer (643 or 840).
+
+    Returns:
+        Result:
+            Returns transfer result with transaction state
+            and OTP sending status.
+
+    Example:
+        >>> transfer_create(
+        ...     "TXN1001",
+        ...     "8600123412341234",
+        ...     "12/27",
+        ...     "9860123412341234",
+        ...     50000,
+        ...     643
+        ... )
+    """
     try:
         request_logger.info(
             "transfer.create: ext_id=%s sender=%s receiver=%s amount=%s currency=%s",
@@ -163,6 +205,36 @@ def transfer_create(
 @method(name="transfer.confirm")
 @log_transfer_method  # LOGGING CONFIRM
 def transfer_confirm(ext_id, otp) -> Result:
+    """
+    Confirms a transfer transaction using an OTP code.
+
+    Purpose:
+        This function verifies the OTP code, checks transfer status,
+        updates card balances, and changes the transfer state
+        to confirmed. If the OTP is entered incorrectly multiple times,
+        the transfer will be cancelled.
+
+    Parameters:
+        ext_id:
+            Unique external transaction ID.
+
+        otp:
+            One-time password sent to the sender's phone number.
+
+    Returns:
+        Result:
+            Returns the transfer result with transaction state
+            and confirmation status.
+
+    Example:
+        >>> transfer_confirm("TXN1001", "123456")
+
+        {
+            "ext_id": "TXN1001",
+            "state": "CONFIRMED"
+        }
+    """
+
     try:
         request_logger.info("transfer.confirm: ext_id=%s", ext_id)
 
@@ -237,6 +309,29 @@ def transfer_confirm(ext_id, otp) -> Result:
 @method(name="transfer.cancel")
 @log_transfer_method  # LOGGING CANCEL
 def transfer_cancel(ext_id) -> Result:
+    """
+    Cancels a transfer transaction.
+
+    Purpose:
+        This function cancels an existing transfer request
+        if it has not been confirmed yet. The transfer state
+        is updated to cancelled.
+
+    Parameters:
+        ext_id:
+            Unique external transaction ID.
+
+    Returns:
+        Result:
+            Returns the transfer result with cancellation status.
+
+    Example:
+        >>> transfer_cancel("TXN1001")
+
+        {
+            "state": "CANCELLED"
+        }
+    """
     try:
         request_logger.info("transfer.cancel: ext_id=%s", ext_id)
 
@@ -393,16 +488,43 @@ def _get_error_cached(code, override_message=None):
 
 
 @method(name="card.info")
-def card_info(card_number: str, expiry: str) -> Result:
+def transfer_create(sender_card: str, receiver_card: str, amount: float) -> Result:
     """
-    Karta ma'lumotlarini qaytaradi. Natija 30 soniyaga Redis da saqlanadi.
+    Creates a money transfer between two bank cards.
 
-    Params:
-        card_number — 16 ta raqamli karta raqami
-        expiry      — MM/YY yoki YYYY-MM formatida muddati
+    Purpose:
+        This function creates a transfer from the sender's card
+        to the receiver's card with the given amount.
 
-    Response:
-        card_status, balance, phone, masked_card
+    Parameters:
+        sender_card (str):
+            Sender's 16-digit card number.
+
+        receiver_card (str):
+            Receiver's 16-digit card number.
+
+        amount (float):
+            Amount of money to transfer.
+
+    Returns:
+        Result:
+            Returns transfer information including:
+                - transfer_id
+                - status
+                - amount
+
+    Example:
+        >>> transfer_create(
+        ...     "8600123412341234",
+        ...     "9860123412341234",
+        ...     50000
+        ... )
+
+        {
+            "transfer_id": 101,
+            "status": "PENDING",
+            "amount": 50000
+        }
     """
     cache_key = f"card_info:{card_number}:{expiry}"
     cached = cache.get(cache_key)
