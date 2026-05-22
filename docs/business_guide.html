@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.6; margin: 40px; color: #222; }
+  h1 { font-size: 20pt; color: #1a1a2e; border-bottom: 2px solid #1a1a2e; padding-bottom: 6px; }
+  h2 { font-size: 14pt; color: #16213e; margin-top: 28px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  h3 { font-size: 12pt; color: #0f3460; margin-top: 16px; }
+  blockquote { background: #f0f4ff; border-left: 4px solid #4a6cf7; padding: 10px 16px; margin: 12px 0; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 10.5pt; }
+  th { background: #1a1a2e; color: white; padding: 8px 12px; text-align: left; }
+  td { border: 1px solid #ccc; padding: 7px 12px; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f7f7; }
+  pre { background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px; padding: 12px 16px; font-family: Courier New, monospace; font-size: 9.5pt; white-space: pre-wrap; }
+  code { background: #eef; border-radius: 3px; padding: 1px 5px; font-family: Courier New, monospace; font-size: 9.5pt; }
+  ol li, ul li { margin-bottom: 4px; }
+  .note { background: #fff8e1; border-left: 4px solid #ffc107; padding: 8px 14px; margin: 10px 0; border-radius: 4px; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+  footer { margin-top: 40px; color: #888; font-style: italic; font-size: 10pt; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>Unired Transfer System — Biznes Qo'llanma</h1>
+
+<blockquote>
+  <strong>Versiya:</strong> 1.0 &nbsp;|&nbsp; <strong>Sana:</strong> 2026-05-22<br>
+  <strong>Maqsad:</strong> Texnik bo'lmagan foydalanuvchilar (bank menejerlari, biznes analitiklar) uchun tizimni tushuntirish.
+</blockquote>
+
+<hr>
+
+<h2>1. Tizim nima qiladi?</h2>
+<p>
+  Unired Transfer System — bu bank kartalaridan kartaga pul o'tkazishni amalga oshiruvchi raqamli platforma.
+  Har bir o'tkazma SMS va Telegram orqali yuborilgan maxfiy kod (OTP) bilan tasdiqlanadi.
+  Tizim avtomatik ravishda har soatda moliyaviy hisobotlarni tayyor qilib, belgilangan Telegram guruhiga yuboradi.
+</p>
+
+<hr>
+
+<h2>2. Asosiy modullar</h2>
+<table>
+  <tr><th>Modul</th><th>Vazifasi</th><th>Foydalanuvchi uchun nima beradi</th></tr>
+  <tr><td><strong>Kartalar (cards)</strong></td><td>Barcha bank kartalarini saqlaydi va boshqaradi</td><td>Admin paneldan karta import/eksport, balans ko'rish</td></tr>
+  <tr><td><strong>O'tkazmalar (task2)</strong></td><td>Karta-dan-kartaga o'tkazma API</td><td>Pul yuborish, tasdiqlash, bekor qilish</td></tr>
+  <tr><td><strong>Telegram Bot (tgbot)</strong></td><td>OTP kodlarni va hisobotlarni yuboradi</td><td>Foydalanuvchi Telegramga OTP kodni oladi</td></tr>
+  <tr><td><strong>Avtomatik vazifalar (Celery)</strong></td><td>Har soat/kunlik statistika hisobotlari</td><td>Menejer har soat/kunda statistika oladi</td></tr>
+</table>
+
+<hr>
+
+<h2>3. O'tkazma qanday ishlaydi? (oddiy til bilan)</h2>
+<pre>1. Mijoz so'rov yuboradi
+   └─► "8600-XXXX kartadan 8600-YYYY kartaga 50 000 so'm o'tkazmoqchiman"
+
+2. Tizim tekshiradi:
+   ├─ Karta bazada bormi? ✓
+   ├─ Karta muddati o'tmadimi? ✓
+   ├─ Telefon raqami boglanganmi? ✓
+   ├─ Balans yetarlimi? ✓
+   └─ Valyuta to'g'rimi? (so'm, rubl yoki dollar) ✓
+
+3. Tasdiqlash kodi yuboriladi
+   └─► Telegram va SMS ga: "🔐 OTP kodi: 847291"
+
+4. Mijoz kodni kiritadi
+   └─► Tizim mablag'ni o'tkazadi (atomik — xavfsiz)
+
+5. Natija:
+   ├─ Yuboruvchi kartadan pul ayriladi
+   └─► Qabul qiluvchi kartaga pul tushadi</pre>
+
+<div class="note">
+  <strong>Muhim:</strong> OTP kodi 3 marta noto'g'ri kiritilsa, o'tkazma avtomatik bekor qilinadi.
+</div>
+
+<hr>
+
+<h2>4. Ma'lumotlar bazasi so'rovlari (texnik bo'lmagan tushuntirish)</h2>
+<table>
+  <tr><th>Amal</th><th>Tizim nima qiladi</th></tr>
+  <tr><td><strong>Karta topish</strong></td><td>Karta raqami va muddati bo'yicha bazadan izlaydi</td></tr>
+  <tr><td><strong>Balans tekshirish</strong></td><td>Yuboruvchi balans ≥ o'tkazma summasimi?</td></tr>
+  <tr><td><strong>OTP tasdiqlash</strong></td><td>Kiritilgan kod saqlangan kod bilan mos kelishini tekshiradi</td></tr>
+  <tr><td><strong>Balans yangilash</strong></td><td>Yuboruvchidan ayiradi, qabul qiluvchiga qo'shadi (bir vaqtda, xavfsiz)</td></tr>
+  <tr><td><strong>Tarix ko'rish</strong></td><td>Barcha o'tkazmalarni sana, holat, karta raqami bo'yicha filtrlash</td></tr>
+</table>
+
+<hr>
+
+<h2>5. Kesh (Cache) nima va nima uchun kerak?</h2>
+<p>Kesh — bu tez-tez so'raladigan ma'lumotlarning vaqtinchalik saqlash joyi (Redis).</p>
+<table>
+  <tr><th>Nima saqlanadi</th><th>Qancha vaqt</th><th>Foydasi</th></tr>
+  <tr><td>Karta ma'lumotlari (<code>card.info</code>)</td><td>60 sekund</td><td>Har so'rovda bazaga murojaat qilmaydi</td></tr>
+  <tr><td>Xato xabarlari</td><td>5 daqiqa</td><td>Standart xabarlar qayta o'qilmaydi</td></tr>
+  <tr><td>Valyuta kurslari (CBU)</td><td>1 soat</td><td>Har so'rovda cbu.uz ga murojaat qilmaydi</td></tr>
+</table>
+
+<hr>
+
+<h2>6. Loglar (ish jurnali) nima uchun kerak?</h2>
+<p>Tizim barcha amallarni ikki faylga yozib boradi:</p>
+
+<h3><code>logs/request.log</code> — har bir so'rov va javob:</h3>
+<pre>2026-05-22 14:30:01 | INFO | IP: 192.168.1.5 | Method: transfer.create | ...
+2026-05-22 14:30:02 | INFO | Response: {state: "created", otp_sent: true}</pre>
+
+<h3><code>logs/error.log</code> — faqat xatolar:</h3>
+<pre>2026-05-22 14:31:05 | ERROR | transfer.confirm failed: ext_id=tr-001 ...</pre>
+
+<div class="note">
+  <strong>Auditorlik uchun:</strong> Har bir o'tkazma kim, qachon, qaysi IP dan yuborilgani saqlanadi.
+</div>
+
+<hr>
+
+<h2>7. Avtomatik hisobotlar</h2>
+<p>Tizim Telegram guruhiga avtomatik hisobot yuboradi:</p>
+<pre>📊 Soatlik hisobot
+━━━━━━━━━━━━━━━━━━━━
+
+💳 KARTALAR
+  Jami: 1,250
+  ✅ Aktiv: 980
+  ⏸ Nofaol: 200
+  ❌ Muddati o'tgan: 70
+  💰 Umumiy balans: 45,230,000.00 UZS
+
+🔄 O'TKAZMALAR
+  Jami: 340
+  ✅ Tasdiqlangan: 298 → 12,500,000.00 UZS
+  ⏳ Kutilmoqda: 15 → 750,000.00 UZS
+  ❌ Bekor qilingan: 27</pre>
+
+<hr>
+
+<h2>8. Excel hisobotlar va import</h2>
+
+<h3>Karta import (Admin panel orqali)</h3>
+<ol>
+  <li><code>/admin/</code> ga kiring</li>
+  <li><code>Cards → Cards</code> bo'limiga o'ting</li>
+  <li><code>Import Excel/CSV</code> tugmasini bosing</li>
+  <li><code>.xlsx</code> yoki <code>.csv</code> fayl yuklang</li>
+</ol>
+
+<h3>Karta eksport (texnik buyruq)</h3>
+<pre>python manage.py export_cards --output hisobot.csv
+python manage.py export_cards --status active --output faol_kartalar.csv</pre>
+
+<hr>
+
+<h2>9. Texnik hujjatlar</h2>
+<table>
+  <tr><th>Resurs</th><th>Tavsif</th></tr>
+  <tr><td><strong>Postman Collection</strong></td><td>API so'rovlarini sinash uchun — <code>docs/postman/task2_collection.json</code></td></tr>
+  <tr><td><strong>Arxitektura diagrammasi</strong></td><td>Tizim oqimi — <code>docs/diagrams/transfer_flow.drawio</code></td></tr>
+  <tr><td><strong>Texnik README</strong></td><td>O'rnatish va ishga tushirish — <code>README.md</code></td></tr>
+</table>
+
+<hr>
+
+<h2>10. Xato kodlari jadvali</h2>
+<table>
+  <tr><th>Kod</th><th>Ma'nosi (oddiy til)</th><th>Nima qilish kerak</th></tr>
+  <tr><td>32700</td><td>Noyob ID kerak</td><td>Boshqa ID bilan qayta yuboring</td></tr>
+  <tr><td>32701</td><td>Bu ID avval ishlatilgan</td><td>Yangi ID yarating</td></tr>
+  <tr><td>32702</td><td>Balans yetarli emas</td><td>Hisobni to'ldiring</td></tr>
+  <tr><td>32703</td><td>Telefon raqami bog'lanmagan</td><td>Bank bilan bog'laning</td></tr>
+  <tr><td>32704</td><td>Karta topilmadi yoki muddati o'tgan</td><td>Karta ma'lumotlarini tekshiring</td></tr>
+  <tr><td>32705</td><td>Karta faol emas</td><td>Bank bilan bog'laning</td></tr>
+  <tr><td>32707</td><td>Noto'g'ri valyuta</td><td>Faqat so'm (UZS), rubl (RUB) yoki dollar (USD)</td></tr>
+  <tr><td>32710</td><td>OTP muddati o'tgan</td><td>Yangi o'tkazma yarating</td></tr>
+  <tr><td>32711</td><td>OTP urinishlari tugadi</td><td>Yangi o'tkazma yarating</td></tr>
+  <tr><td>32712</td><td>Noto'g'ri OTP</td><td>Kodni qayta kiriting</td></tr>
+</table>
+
+<footer>Savollar uchun: texnik jamoa bilan bog'laning.</footer>
+
+</body>
+</html>
