@@ -9,7 +9,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from jsonrpcserver import Error as RPCError
-from jsonrpcserver import Result, Success, dispatch_to_serializable, method
+from jsonrpcserver import Result, Success, dispatch_to_serializable, method, dispatch
 
 from cards.models import Card
 from cards.utils import format_expire
@@ -335,18 +335,7 @@ def transfer_cancel(ext_id) -> Result:
     except Exception:
         error_logger.exception("transfer.cancel failed: ext_id=%s", ext_id)
         return get_error(ERR_UNKNOWN)
-    if card_number:
-        queryset = queryset.filter(sender_card_number=card_number)
-    if status:
-        queryset = queryset.filter(state=status)
-    if date_from:
-        queryset = queryset.filter(created_at__gte=datetime.fromisoformat(date_from))
-    if date_to:
-        queryset = queryset.filter(created_at__lte=datetime.fromisoformat(date_to))
-
-    data = [{"ext_id": t.ext_id, "amount": str(t.sending_amount), "state": t.state, "date": t.created_at.isoformat()} for t in queryset]
-    return Success(data)
-
+    
 @method(name="transfer.state")
 def transfer_state(ext_id) -> Result:
     try:
