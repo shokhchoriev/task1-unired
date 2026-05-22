@@ -3,7 +3,6 @@ import random
 from decimal import Decimal
 import time
 import functools
-import functools
 
 import httpx
 from django.conf import settings
@@ -17,6 +16,27 @@ from .models import Transfer
 request_logger = logging.getLogger("task2.request")
 
 def log_transfer_method(func):
+    """Decorator that logs method name, payload, response, and elapsed time.
+
+    Wraps any JSON-RPC handler decorated with ``@method``. On each call it
+    records the function name, the full argument payload, the return value,
+    execution time in seconds, and a SUCCESS/ERROR status to
+    ``task2.request`` logger.
+
+    Args:
+        func (Callable): The RPC handler function to wrap.
+
+    Returns:
+        Callable: Wrapped function with identical signature.
+
+    Example::
+
+        @method(name="transfer.create")
+        @log_transfer_method
+        def transfer_create(ext_id, ...):
+            ...
+        # Logs: "Method: transfer_create | Status: SUCCESS | ... | Time: 0.0123s"
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -84,6 +104,27 @@ class FakeNotificationService:
             return {"channel": "telegram", "to": tg_id, "sent": False}
 
     def send_otp(self, phone, tg_id, otp):
+        """Send the OTP to the user via both SMS and Telegram simultaneously.
+
+        Dispatches the OTP message through two channels: ``send_sms`` (always
+        logs, simulates SMS) and ``send_telegram`` (real Telegram Bot API call
+        when ``TELEGRAM_BOT_TOKEN`` is set, otherwise logs only).
+
+        Args:
+            phone (str): Sender's phone number in E.164 format (e.g. ``+998901234567``).
+            tg_id (str | int): Sender's Telegram chat ID. Non-numeric values
+                trigger log-only mode without an API call.
+            otp (str): 6-digit one-time password to deliver.
+
+        Returns:
+            bool: Always ``True`` (delivery status is logged, not raised).
+
+        Example::
+
+            FakeNotificationService().send_otp(
+                phone="+998901234567", tg_id="123456789", otp="847291"
+            )
+        """
         message = f"🔐 O'tkazma OTP kodi: {otp}\n\nUshbu kodni hech kimga bermang!"
         self.send_sms(phone=phone, message=message)
         self.send_telegram(tg_id=tg_id, message=message)
@@ -181,7 +222,26 @@ def _get_rate(currency: int) -> Decimal:
 
 
 def calculate_exchange(amount: Decimal, currency: int) -> Decimal:
-    """Return the UZS equivalent of `amount` units of `currency`."""
+    """Convert a foreign-currency amount to UZS using live CBU rates.
+
+    Fetches today's rates from cbu.uz (cached in-process for 1 hour). Falls
+    back to hardcoded rates (RUB=140, USD=12500) if the API is unreachable.
+
+    Args:
+        amount (Decimal): Positive amount in the source currency.
+        currency (int): ISO 4217 numeric code — 643 (RUB) or 840 (USD).
+
+    Returns:
+        Decimal: Equivalent amount in UZS, rounded to 2 decimal places.
+
+    Raises:
+        ValueError: If ``currency`` is not in {643, 840}.
+
+    Example::
+
+        calculate_exchange(Decimal("100"), 840)
+        # → Decimal("1250000.00")  (at rate 12500 UZS/USD)
+    """
     if currency not in {643, 840}:
         raise ValueError("Currency not allowed")
     rate = _get_rate(currency)

@@ -1,0 +1,65 @@
+{
+  "id": "task2-env-001",
+  "name": "Task2 – Local Dev",
+  "values": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000/task2/",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "sender_card_number",
+      "value": "8600123412341234",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "sender_card_expiry",
+      "value": "12/26",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "receiver_card_number",
+      "value": "8600567856785678",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "currency",
+      "value": "860",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "sending_amount",
+      "value": "50000",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "ext_id",
+      "value": "",
+      "type": "any",
+      "enabled": true,
+      "description": "Auto-set by transfer.create pre-request script"
+    },
+    {
+      "key": "otp",
+      "value": "",
+      "type": "any",
+      "enabled": true,
+      "description": "Set manually after receiving OTP via Telegram/SMS"
+    },
+    {
+      "key": "last_state",
+      "value": "",
+      "type": "any",
+      "enabled": true,
+      "description": "Auto-captured from last response"
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "description": "Local development environment for Task2 JSON-RPC API. Set sender/receiver card numbers to match your local DB before running."
+}

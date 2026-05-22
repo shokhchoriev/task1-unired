@@ -1,0 +1,430 @@
+{
+  "info": {
+    "_postman_id": "task2-transfer-rpc-v2",
+    "name": "Task2 – Transfer JSON-RPC API",
+    "description": "Complete JSON-RPC 2.0 collection for the Unired Transfer service.\n\n**Automated flow (Collection Runner order):**\n1. card.info\n2. transfer.create  ← auto-generates ext_id\n3. transfer.confirm ← set `otp` env variable manually from Telegram\n4. transfer.state\n\n**Error case tests** are included in every request.\n\n**Environment:** Import `task2_environment.json` and update card numbers to match your local DB.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "{{base_url}}",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 – card.info",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response is JSON-RPC 2.0', () => {",
+              "    pm.expect(json.jsonrpc).to.eql('2.0');",
+              "});",
+              "",
+              "if (json.result) {",
+              "    pm.test('card_status is present', () => {",
+              "        pm.expect(json.result.card_status).to.be.a('string');",
+              "    });",
+              "    pm.test('balance is numeric string', () => {",
+              "        pm.expect(parseFloat(json.result.balance)).to.be.a('number');",
+              "    });",
+              "    pm.test('masked_card hides middle digits', () => {",
+              "        pm.expect(json.result.masked_card).to.include('*');",
+              "    });",
+              "    pm.collectionVariables.set('last_state', json.result.card_status);",
+              "    console.log('card.info OK | status:', json.result.card_status, '| balance:', json.result.balance);",
+              "} else if (json.error) {",
+              "    pm.test('Error code in valid range [32700–32714]', () => {",
+              "        pm.expect(json.error.code).to.be.within(32700, 32714);",
+              "    });",
+              "    console.warn('card.info error:', json.error.code, json.error.message);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"card.info\",\n  \"params\": {\n    \"card_number\": \"{{sender_card_number}}\",\n    \"expiry\": \"{{sender_card_expiry}}\"\n  }\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+        "description": "Returns card status, balance, phone, and masked card number.\nResult is Redis-cached for 60 seconds."
+      },
+      "response": [
+        {
+          "name": "Success – active card",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": {\n    \"card_status\": \"active\",\n    \"balance\": \"1500000.00\",\n    \"phone\": \"+998901234567\",\n    \"masked_card\": \"860012******1234\"\n  }\n}"
+        },
+        {
+          "name": "Error – card not found (32704)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32704, \"message\": \"Card expiry is invalid\" }\n}"
+        }
+      ]
+    },
+    {
+      "name": "2 – transfer.create",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Generate unique ext_id on every run for idempotency",
+              "const ext_id = 'tr-' + Date.now();",
+              "pm.environment.set('ext_id', ext_id);",
+              "console.log('Generated ext_id:', ext_id);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response is JSON-RPC 2.0', () => {",
+              "    pm.expect(json.jsonrpc).to.eql('2.0');",
+              "});",
+              "",
+              "if (json.result) {",
+              "    pm.test('state is created', () => {",
+              "        pm.expect(json.result.state).to.eql('created');",
+              "    });",
+              "    pm.test('otp_sent is true', () => {",
+              "        pm.expect(json.result.otp_sent).to.be.true;",
+              "    });",
+              "    pm.test('ext_id matches', () => {",
+              "        pm.expect(json.result.ext_id).to.eql(pm.environment.get('ext_id'));",
+              "    });",
+              "    pm.environment.set('last_state', json.result.state);",
+              "    console.log('Transfer created. ext_id:', json.result.ext_id);",
+              "    console.log('⚠️  Now set the `otp` environment variable from Telegram/SMS before running transfer.confirm');",
+              "} else if (json.error) {",
+              "    pm.test('Error code in valid range [32700–32714]', () => {",
+              "        pm.expect(json.error.code).to.be.within(32700, 32714);",
+              "    });",
+              "    console.warn('transfer.create error:', json.error.code, json.error.message);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.create\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"sender_card_number\": \"{{sender_card_number}}\",\n    \"sender_card_expiry\": \"{{sender_card_expiry}}\",\n    \"receiver_card_number\": \"{{receiver_card_number}}\",\n    \"sending_amount\": {{sending_amount}},\n    \"currency\": {{currency}}\n  }\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+        "description": "Creates a new transfer. ext_id is auto-generated by pre-request script.\nOTP is sent to sender's phone via SMS and Telegram."
+      },
+      "response": [
+        {
+          "name": "Success – transfer created",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": {\n    \"ext_id\": \"tr-1716371234567\",\n    \"state\": \"created\",\n    \"otp_sent\": true\n  }\n}"
+        },
+        {
+          "name": "Error – ext_id already exists (32701)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32701, \"message\": \"Ext id already exists\" }\n}"
+        },
+        {
+          "name": "Error – balance not enough (32702)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32702, \"message\": \"Balance is not enough\" }\n}"
+        },
+        {
+          "name": "Error – currency not allowed (32707)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32707, \"message\": \"Currency is not allowed\" }\n}"
+        }
+      ]
+    },
+    {
+      "name": "3 – transfer.confirm",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// OTP must be set manually in environment after receiving it from Telegram/SMS",
+              "const otp = pm.environment.get('otp');",
+              "if (!otp) {",
+              "    console.warn('⚠️  `otp` environment variable is empty! Set it from Telegram/SMS first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "",
+              "if (json.result) {",
+              "    pm.test('state is confirmed', () => {",
+              "        pm.expect(json.result.state).to.eql('confirmed');",
+              "    });",
+              "    pm.environment.set('last_state', json.result.state);",
+              "    console.log('Transfer confirmed. state:', json.result.state);",
+              "} else if (json.error) {",
+              "    pm.test('Error code in valid range [32700–32714]', () => {",
+              "        pm.expect(json.error.code).to.be.within(32700, 32714);",
+              "    });",
+              "    if (json.error.code === 32712) {",
+              "        console.warn('Wrong OTP:', json.error.message);",
+              "    } else if (json.error.code === 32711) {",
+              "        console.error('OTP attempt limit reached. Transfer is cancelled.');",
+              "    }",
+              "    console.warn('transfer.confirm error:', json.error.code, json.error.message);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.confirm\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"otp\": \"{{otp}}\"\n  }\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+        "description": "Confirms the transfer using the OTP received via Telegram/SMS.\n\n⚠️ Set the `otp` environment variable manually before sending this request.\nMax 3 attempts — after 3 wrong OTPs the transfer is auto-cancelled."
+      },
+      "response": [
+        {
+          "name": "Success – confirmed",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": { \"ext_id\": \"tr-1716371234567\", \"state\": \"confirmed\" }\n}"
+        },
+        {
+          "name": "Error – wrong OTP (32712)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32712, \"message\": \"OTP is wrong, left try count is 2\" }\n}"
+        },
+        {
+          "name": "Error – attempt limit reached (32711)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32711, \"message\": \"Try count reached\" }\n}"
+        }
+      ]
+    },
+    {
+      "name": "4 – transfer.state",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "",
+              "if (json.result) {",
+              "    pm.test('ext_id matches', () => {",
+              "        pm.expect(json.result.ext_id).to.eql(pm.environment.get('ext_id'));",
+              "    });",
+              "    pm.test('state is a valid value', () => {",
+              "        pm.expect(['created', 'confirmed', 'cancelled']).to.include(json.result.state);",
+              "    });",
+              "    pm.environment.set('last_state', json.result.state);",
+              "    console.log('Transfer state:', json.result.state);",
+              "} else if (json.error) {",
+              "    pm.test('Error code in valid range [32700–32714]', () => {",
+              "        pm.expect(json.error.code).to.be.within(32700, 32714);",
+              "    });",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.state\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\"\n  }\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+        "description": "Returns current state of a transfer: created | confirmed | cancelled"
+      },
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": { \"ext_id\": \"tr-1716371234567\", \"state\": \"confirmed\" }\n}"
+        }
+      ]
+    },
+    {
+      "name": "5 – transfer.cancel",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "",
+              "if (json.result) {",
+              "    pm.test('state is cancelled', () => {",
+              "        pm.expect(json.result.state).to.eql('cancelled');",
+              "    });",
+              "    pm.environment.set('last_state', 'cancelled');",
+              "    console.log('Transfer cancelled successfully');",
+              "} else if (json.error) {",
+              "    pm.test('Error code in valid range [32700–32714]', () => {",
+              "        pm.expect(json.error.code).to.be.within(32700, 32714);",
+              "    });",
+              "    console.warn('transfer.cancel error (transfer may not be in created state):', json.error.message);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.cancel\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\"\n  }\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+        "description": "Cancels a transfer. Only works when state=created.\nReturns error 32706 if transfer is already confirmed or cancelled."
+      },
+      "response": [
+        {
+          "name": "Success – cancelled",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": { \"state\": \"cancelled\" }\n}"
+        },
+        {
+          "name": "Error – cannot cancel (32706)",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"error\": { \"code\": 32706, \"message\": \"Transfer cannot be cancelled in current state\" }\n}"
+        }
+      ]
+    },
+    {
+      "name": "6 – transfer.history",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "",
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "",
+              "if (json.result) {",
+              "    pm.test('Result is an array', () => {",
+              "        pm.expect(json.result).to.be.an('array');",
+              "    });",
+              "    if (json.result.length > 0) {",
+              "        const first = json.result[0];",
+              "        pm.test('Each item has required fields', () => {",
+              "            pm.expect(first).to.have.keys(['ext_id', 'sending_amount', 'state', 'created_at']);",
+              "        });",
+              "        pm.test('state is valid', () => {",
+              "            pm.expect(['created', 'confirmed', 'cancelled']).to.include(first.state);",
+              "        });",
+              "    }",
+              "    console.log('transfer.history: returned', json.result.length, 'records');",
+              "} else if (json.error) {",
+              "    pm.test('Error code in valid range [32700–32714]', () => {",
+              "        pm.expect(json.error.code).to.be.within(32700, 32714);",
+              "    });",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.history\",\n  \"params\": {\n    \"card_number\": \"{{sender_card_number}}\",\n    \"start_date\": \"2026-05-01\",\n    \"end_date\": \"2026-05-31\",\n    \"status\": \"confirmed\"\n  }\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+        "description": "Returns paginated transfer history with optional filters.\nAll params are optional: card_number, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD), status."
+      },
+      "response": [
+        {
+          "name": "Success – list of transfers",
+          "status": "OK",
+          "code": 200,
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": [\n    {\n      \"ext_id\": \"tr-1716371234567\",\n      \"sending_amount\": \"50000.00\",\n      \"state\": \"confirmed\",\n      \"created_at\": \"2026-05-22T14:30:01\"\n    }\n  ]\n}"
+        }
+      ]
+    }
+  ]
+}
