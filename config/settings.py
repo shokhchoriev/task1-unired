@@ -114,7 +114,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8755117994:AAHEigraYmQ4EkeZm8GDXHg0a6kJsWR56co")
 
 # Telegram report chat ID – set via env in production
-TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "")
+TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "1381602449")
 
 
 # ─── Redis ────────────────────────────────────────────────────────────────────
@@ -129,10 +129,10 @@ CELERY_TASK_SERIALIZER = "json"
 
 # crontab schedules — 3600 = har soatda, 86400 = har kunda
 CELERY_BEAT_SCHEDULE = {
-    # Har soatda statistika yuborish (soat boshida)
+    # Har daqiqada statistika yuborish (test uchun)
     "hourly-telegram-report": {
         "task": "task2.tasks.send_hourly_report",
-        "schedule": 3600,
+        "schedule": 60,
     },
     # Har kuni soat 08:00 da (Tashkent vaqti) statistika yuborish
     "daily-telegram-report": {
