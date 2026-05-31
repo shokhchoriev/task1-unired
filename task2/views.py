@@ -21,6 +21,9 @@ from .utils import (
     generate_otp,
     get_transfer_by_ext_id,
     log_transfer_method,
+    mask_card_number,
+    mask_sensitive_text,
+    sanitize_for_log,
 )
 
 
@@ -113,9 +116,9 @@ def transfer_create(
             "method": "transfer.create",
             "params": {
                 "ext_id": "tr-1716371234567",
-                "sender_card_number": "8600123412341234",
+                "sender_card_number": "8600********1234",
                 "sender_card_expiry": "12/26",
-                "receiver_card_number": "8600567856785678",
+                "receiver_card_number": "8600********5678",
                 "sending_amount": 50000,
                 "currency": 860
             }
@@ -125,8 +128,8 @@ def transfer_create(
         request_logger.info(
             "transfer.create: ext_id=%s sender=%s receiver=%s amount=%s currency=%s",
             ext_id,
-            sender_card_number,
-            receiver_card_number,
+            mask_card_number(sender_card_number),
+            mask_card_number(receiver_card_number),
             sending_amount,
             currency,
         )
@@ -406,11 +409,11 @@ def json_rpc_view(request):
     ip = x_forwarded_for.split(",")[0] if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
     request_data = request.body.decode("utf-8")
-    request_logger.info("IP: %s | Request: %s", ip, request_data)
+    request_logger.info("IP: %s | Request: %s", ip, mask_sensitive_text(request_data))
 
     response = dispatch_to_serializable(request_data)
 
-    request_logger.info("IP: %s | Response: %s", ip, response)
+    request_logger.info("IP: %s | Response: %s", ip, sanitize_for_log(response))
 
     if response is None:
         return HttpResponse(status=204)
@@ -460,7 +463,7 @@ def card_info(card_number: str, expiry: str) -> Result:
     TTL. Subsequent calls within the TTL window skip the DB entirely.
 
     The ``masked_card`` field exposes the first 6 and last 4 digits only
-    (e.g. ``"860012******1234"``), suitable for display in client UIs.
+    (e.g. ``"8600********1234"``), suitable for display in client UIs.
 
     Args:
         card_number (str): 16-digit card number (no spaces).
@@ -474,10 +477,10 @@ def card_info(card_number: str, expiry: str) -> Result:
 
         {
             "method": "card.info",
-            "params": {"card_number": "8600123412341234", "expiry": "12/26"}
+            "params": {"card_number": "8600********1234", "expiry": "12/26"}
         }
         # → {"card_status": "active", "balance": "1500000.00",
-        #     "phone": "+998901234567", "masked_card": "860012******1234"}
+        #     "phone": "+998901234567", "masked_card": "8600********1234"}
     """
     cache_key = f"card_info:{card_number}:{expiry}"
     cached = cache.get(cache_key)
@@ -494,7 +497,7 @@ def card_info(card_number: str, expiry: str) -> Result:
         return _get_error_cached(ERR_CARD_EXPIRY_INVALID)
 
     # Masked card: dastlabki 6 va oxirgi 4 ta ko'rinadi, o'rtasi yulduzcha
-    masked = card_number[:6] + "*" * (len(card_number) - 10) + card_number[-4:]
+    masked = card_number[:4] + "*" * (len(card_number) - 8) + card_number[-4:]
 
     data = {
         "card_status": card.status,

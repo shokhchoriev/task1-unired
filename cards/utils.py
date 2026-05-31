@@ -34,7 +34,7 @@ def human_card(card_number):
 
 def card_mask(card_number):
     digits = format_card(card_number)
-    return f"{digits[:4]} **** **** {digits[-4:]}"
+    return f"{digits[:4]}********{digits[-4:]}"
 
 
 def format_phone(raw_phone):
