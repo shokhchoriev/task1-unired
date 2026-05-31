@@ -3,11 +3,13 @@ import random
 from decimal import Decimal
 import time
 import functools
+import inspect
 
 import httpx
 from django.conf import settings
 
 from decimal import Decimal, InvalidOperation
+from config.helpers import mask_card_number, mask_sensitive_text, sanitize_for_log
 from .models import Transfer
 
 
@@ -40,13 +42,17 @@ def log_transfer_method(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
-        request_payload = {"args": args, "kwargs": kwargs}
+        try:
+            bound_args = inspect.signature(func).bind_partial(*args, **kwargs)
+            request_payload = sanitize_for_log(bound_args.arguments)
+        except Exception:
+            request_payload = sanitize_for_log({"args": args, "kwargs": kwargs})
         
         try:
             response = func(*args, **kwargs)
             status = "SUCCESS"
         except Exception as e:
-            response = {"error": str(e)}
+            response = {"error": mask_sensitive_text(str(e))}
             status = "ERROR"
             raise e
         finally:
@@ -55,7 +61,8 @@ def log_transfer_method(func):
             
             log_entry = (
                 f"Method: {func.__name__} | Status: {status} | "
-                f"Payload: {repr(request_payload)} | Response: {repr(response)} | "
+                f"Payload: {repr(request_payload)} | "
+                f"Response: {repr(sanitize_for_log(response))} | "
                 f"Time: {processing_time:.4f}s"
             )
             request_logger.info(log_entry)
@@ -80,13 +87,17 @@ class FakeNotificationService:
     """Sends OTP via real Telegram Bot API (falls back to log-only if token missing)."""
 
     def send_sms(self, phone, message):
-        logger.info("[SMS] to=%s message=%s", phone, message)
+        logger.info("[SMS] to=%s message=%s", phone, mask_sensitive_text(message))
         return {"channel": "sms", "to": phone, "sent": True}
 
     def send_telegram(self, tg_id, message):
         token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
         if not token or not str(tg_id).lstrip("-").isdigit():
-            logger.info("[TELEGRAM_LOG] tg_id=%s message=%s", tg_id, message)
+            logger.info(
+                "[TELEGRAM_LOG] tg_id=%s message=%s",
+                tg_id,
+                mask_sensitive_text(message),
+            )
             return {"channel": "telegram", "to": tg_id, "sent": False}
 
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -122,7 +133,7 @@ class FakeNotificationService:
         Example::
 
             FakeNotificationService().send_otp(
-                phone="+998901234567", tg_id="123456789", otp="847291"
+                phone="+998901234567", tg_id="123456789", otp="******"
             )
         """
         message = f"🔐 O'tkazma OTP kodi: {otp}\n\nUshbu kodni hech kimga bermang!"
@@ -136,7 +147,12 @@ def generate_otp(length=6):
 
 
 def send_telegram_message(phone, message, chat_id=123456):
-    logger.info("[FAKE_TELEGRAM_LEGACY] chat_id=%s phone=%s message=%s", chat_id, phone, message)
+    logger.info(
+        "[FAKE_TELEGRAM_LEGACY] chat_id=%s phone=%s message=%s",
+        chat_id,
+        phone,
+        mask_sensitive_text(message),
+    )
     return True
 
 
@@ -261,6 +277,7 @@ def check_otp(transfer, otp):
 
     if transfer.otp != otp:
         transfer.try_count += 1
+        
         transfer.save(update_fields=["try_count", "updated_at"])
         raise Exception(f"Noto‘g‘ri OTP, yana {3 - transfer.try_count} urinish qoldi")
 
