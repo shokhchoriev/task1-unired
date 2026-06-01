@@ -72,8 +72,7 @@ def _normalize_expiry(expiry_str):
         return format_expire(expiry_str)
     except Exception:
         return None
-
-
+    
 @method(name="transfer.create")
 @log_transfer_method  # LOGGING CREATE
 def transfer_create(
@@ -110,7 +109,6 @@ def transfer_create(
         RPCError 32706: unexpected server error (logged to error.log).
 
     Example::
-
         {
             "jsonrpc": "2.0", "id": 1,
             "method": "transfer.create",
@@ -120,7 +118,7 @@ def transfer_create(
                 "sender_card_expiry": "12/26",
                 "receiver_card_number": "8600********5678",
                 "sending_amount": 50000,
-                "currency": 860
+                "currency": 840
             }
         }
     """
