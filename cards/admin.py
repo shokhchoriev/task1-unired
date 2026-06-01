@@ -9,7 +9,7 @@ from openpyxl import Workbook
 
 from .models import Card
 from .services import import_cards_from_excel
-from .utils import human_card, human_phone
+from .utils import card_mask, human_phone
 
 
 class ExcelImportForm(forms.Form):
@@ -130,7 +130,7 @@ class CardAdmin(admin.ModelAdmin):
 
     @admin.display(description="Card Number")
     def readable_card_number(self, obj):
-        return human_card(obj.card_number)
+        return card_mask(obj.card_number)
 
     @admin.display(description="Phone")
     def readable_phone(self, obj):
@@ -175,7 +175,7 @@ class CardAdmin(admin.ModelAdmin):
 
         for card in queryset.order_by("card_number"):
             sheet.append([
-                human_card(card.card_number),
+                card_mask(card.card_number),
                 str(card.expire),
                 card.phone or "",
                 card.status,
@@ -205,7 +205,7 @@ class CardAdmin(admin.ModelAdmin):
 
         for card in queryset.order_by("card_number"):
             sheet.append([
-                human_card(card.card_number),
+                card_mask(card.card_number),
                 str(card.expire),
                 card.phone or "",
                 card.status,

@@ -1,26 +1,79 @@
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - dependency may not be installed yet
+    load_dotenv = None
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+if load_dotenv is not None:
+    load_dotenv(BASE_DIR / ".env")
+
+
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_list(name, default=None):
+    value = os.getenv(name)
+    if value is None:
+        return default or []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 # Quick-start development settings - unsuitable for production
 
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-8t2gl36pmw$)j_u8$*agz_qd(w^5gjx(d9%fn($u77ry)i2!22"
+DEBUG = env_bool("DEBUG", False)
+SECRET_KEY = os.getenv("SECRET_KEY") or os.getenv("DJANGO_SECRET_KEY")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "True").strip().lower() in {"1", "true", "yes", "on"}
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "local-development-only-secret-key"
+    else:
+        raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG=False.")
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".pythonanywhere.com"]
+ALLOWED_HOSTS = env_list(
+    "ALLOWED_HOSTS",
+    ["127.0.0.1", "localhost"] if DEBUG else [],
+)
+
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must be set when DEBUG=False.")
+
+CORS_ALLOWED_ORIGINS = env_list(
+    "CORS_ALLOWED_ORIGINS",
+    ["https://yourfrontend.com", "http://localhost:3000"],
+)
+CORS_ALLOW_ALL_ORIGINS = False
+
+ADMIN_ALLOWED_IPS = env_list(
+    "ADMIN_ALLOWED_IPS",
+    ["127.0.0.1", "::1"],
+)
+TRUST_X_FORWARDED_FOR = env_bool("TRUST_X_FORWARDED_FOR", False)
+
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000" if not DEBUG else "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+SECURE_HSTS_PRELOAD = not DEBUG
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    "corsheaders",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -34,6 +87,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
+    "config.middleware.AdminIPRestrictionMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -111,7 +166,8 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8755117994:AAHEigraYmQ4EkeZm8GDXHg0a6kJsWR56co")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 
 # Telegram report chat ID – set via env in production
 TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "")
@@ -129,12 +185,14 @@ CELERY_TASK_SERIALIZER = "json"
 
 # crontab schedules — 3600 = har soatda, 86400 = har kunda
 CELERY_BEAT_SCHEDULE = {
-    # Har soatda statistika yuborish (soat boshida)
+    # Har daqiqada statistika yuborish (test uchun)
     "hourly-telegram-report": {
         "task": "task2.tasks.send_hourly_report",
-        "schedule": 3600,
+        "schedule": 60,
     },
     # Har kuni soat 08:00 da (Tashkent vaqti) statistika yuborish
+
+
     "daily-telegram-report": {
         "task": "task2.tasks.send_daily_report",
         "schedule": 86400,
@@ -157,6 +215,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "verbose": {
+            "()": "config.helpers.MaskingFormatter",
             "format": "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         },
     },

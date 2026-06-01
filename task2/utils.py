@@ -3,12 +3,13 @@ import random
 from decimal import Decimal
 import time
 import functools
-import functools
+import inspect
 
 import httpx
 from django.conf import settings
 
 from decimal import Decimal, InvalidOperation
+from config.helpers import mask_card_number, mask_sensitive_text, sanitize_for_log
 from .models import Transfer
 
 
@@ -17,16 +18,41 @@ from .models import Transfer
 request_logger = logging.getLogger("task2.request")
 
 def log_transfer_method(func):
+    """Decorator that logs method name, payload, response, and elapsed time.
+
+    Wraps any JSON-RPC handler decorated with ``@method``. On each call it
+    records the function name, the full argument payload, the return value,
+    execution time in seconds, and a SUCCESS/ERROR status to
+    ``task2.request`` logger.
+
+    Args:
+        func (Callable): The RPC handler function to wrap.
+
+    Returns:
+        Callable: Wrapped function with identical signature.
+
+    Example::
+
+        @method(name="transfer.create")
+        @log_transfer_method
+        def transfer_create(ext_id, ...):
+            ...
+        # Logs: "Method: transfer_create | Status: SUCCESS | ... | Time: 0.0123s"
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
-        request_payload = {"args": args, "kwargs": kwargs}
+        try:
+            bound_args = inspect.signature(func).bind_partial(*args, **kwargs)
+            request_payload = sanitize_for_log(bound_args.arguments)
+        except Exception:
+            request_payload = sanitize_for_log({"args": args, "kwargs": kwargs})
         
         try:
             response = func(*args, **kwargs)
             status = "SUCCESS"
         except Exception as e:
-            response = {"error": str(e)}
+            response = {"error": mask_sensitive_text(str(e))}
             status = "ERROR"
             raise e
         finally:
@@ -35,7 +61,8 @@ def log_transfer_method(func):
             
             log_entry = (
                 f"Method: {func.__name__} | Status: {status} | "
-                f"Payload: {repr(request_payload)} | Response: {repr(response)} | "
+                f"Payload: {repr(request_payload)} | "
+                f"Response: {repr(sanitize_for_log(response))} | "
                 f"Time: {processing_time:.4f}s"
             )
             request_logger.info(log_entry)
@@ -60,13 +87,17 @@ class FakeNotificationService:
     """Sends OTP via real Telegram Bot API (falls back to log-only if token missing)."""
 
     def send_sms(self, phone, message):
-        logger.info("[SMS] to=%s message=%s", phone, message)
+        logger.info("[SMS] to=%s message=%s", phone, mask_sensitive_text(message))
         return {"channel": "sms", "to": phone, "sent": True}
 
     def send_telegram(self, tg_id, message):
         token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
         if not token or not str(tg_id).lstrip("-").isdigit():
-            logger.info("[TELEGRAM_LOG] tg_id=%s message=%s", tg_id, message)
+            logger.info(
+                "[TELEGRAM_LOG] tg_id=%s message=%s",
+                tg_id,
+                mask_sensitive_text(message),
+            )
             return {"channel": "telegram", "to": tg_id, "sent": False}
 
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -84,6 +115,27 @@ class FakeNotificationService:
             return {"channel": "telegram", "to": tg_id, "sent": False}
 
     def send_otp(self, phone, tg_id, otp):
+        """Send the OTP to the user via both SMS and Telegram simultaneously.
+
+        Dispatches the OTP message through two channels: ``send_sms`` (always
+        logs, simulates SMS) and ``send_telegram`` (real Telegram Bot API call
+        when ``TELEGRAM_BOT_TOKEN`` is set, otherwise logs only).
+
+        Args:
+            phone (str): Sender's phone number in E.164 format (e.g. ``+998901234567``).
+            tg_id (str | int): Sender's Telegram chat ID. Non-numeric values
+                trigger log-only mode without an API call.
+            otp (str): 6-digit one-time password to deliver.
+
+        Returns:
+            bool: Always ``True`` (delivery status is logged, not raised).
+
+        Example::
+
+            FakeNotificationService().send_otp(
+                phone="+998901234567", tg_id="123456789", otp="******"
+            )
+        """
         message = f"🔐 O'tkazma OTP kodi: {otp}\n\nUshbu kodni hech kimga bermang!"
         self.send_sms(phone=phone, message=message)
         self.send_telegram(tg_id=tg_id, message=message)
@@ -95,7 +147,12 @@ def generate_otp(length=6):
 
 
 def send_telegram_message(phone, message, chat_id=123456):
-    logger.info("[FAKE_TELEGRAM_LEGACY] chat_id=%s phone=%s message=%s", chat_id, phone, message)
+    logger.info(
+        "[FAKE_TELEGRAM_LEGACY] chat_id=%s phone=%s message=%s",
+        chat_id,
+        phone,
+        mask_sensitive_text(message),
+    )
     return True
 
 
@@ -181,7 +238,26 @@ def _get_rate(currency: int) -> Decimal:
 
 
 def calculate_exchange(amount: Decimal, currency: int) -> Decimal:
-    """Return the UZS equivalent of `amount` units of `currency`."""
+    """Convert a foreign-currency amount to UZS using live CBU rates.
+
+    Fetches today's rates from cbu.uz (cached in-process for 1 hour). Falls
+    back to hardcoded rates (RUB=140, USD=12500) if the API is unreachable.
+
+    Args:
+        amount (Decimal): Positive amount in the source currency.
+        currency (int): ISO 4217 numeric code — 643 (RUB) or 840 (USD).
+
+    Returns:
+        Decimal: Equivalent amount in UZS, rounded to 2 decimal places.
+
+    Raises:
+        ValueError: If ``currency`` is not in {643, 840}.
+
+    Example::
+
+        calculate_exchange(Decimal("100"), 840)
+        # → Decimal("1250000.00")  (at rate 12500 UZS/USD)
+    """
     if currency not in {643, 840}:
         raise ValueError("Currency not allowed")
     rate = _get_rate(currency)
@@ -201,6 +277,7 @@ def check_otp(transfer, otp):
 
     if transfer.otp != otp:
         transfer.try_count += 1
+        
         transfer.save(update_fields=["try_count", "updated_at"])
         raise Exception(f"Noto‘g‘ri OTP, yana {3 - transfer.try_count} urinish qoldi")
 

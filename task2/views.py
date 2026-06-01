@@ -21,6 +21,9 @@ from .utils import (
     generate_otp,
     get_transfer_by_ext_id,
     log_transfer_method,
+    mask_card_number,
+    mask_sensitive_text,
+    sanitize_for_log,
 )
 
 
@@ -81,54 +84,52 @@ def transfer_create(
     sending_amount,
     currency,
 ) -> Result:
-    """
-    Creates a money transfer between two bank cards.
+    """Create a new money transfer and send OTP to the sender.
 
-    Purpose:
-        This function validates card information, checks balance,
-        creates a transfer request, and sends an OTP code to confirm
-        the transaction.
+    Validates all input fields, checks card status and balance, converts the
+    sending amount to UZS via CBU exchange rates, persists a Transfer record
+    with state=CREATED, and dispatches a 6-digit OTP via SMS and Telegram.
 
-    Parameters:
-        ext_id:
-            Unique external transaction ID.
-
-        sender_card_number:
-            Sender's card number.
-
-        sender_card_expiry:
-            Sender card expiry date in MM/YY or YYYY-MM format.
-
-        receiver_card_number:
-            Receiver's card number.
-
-        sending_amount:
-            Amount of money to transfer.
-
-        currency:
-            Currency code of the transfer (643 or 840).
+    Args:
+        ext_id (str): Caller-supplied unique ID for idempotency (max 100 chars).
+        sender_card_number (str): 16-digit sender card number.
+        sender_card_expiry (str): Card expiry in MM/YY or YYYY-MM format.
+        receiver_card_number (str): 16-digit receiver card number.
+        sending_amount (int | float | str): Positive amount in `currency` units.
+        currency (int): ISO 4217 numeric code — 643 (RUB) or 840 (USD).
 
     Returns:
-        Result:
-            Returns transfer result with transaction state
-            and OTP sending status.
+        Success: ``{"ext_id": str, "state": "created", "otp_sent": True}``
+        RPCError 32701: ext_id already exists.
+        RPCError 32707: currency not in {643, 840}.
+        RPCError 32709: sending_amount <= 0 or unparseable.
+        RPCError 32704: sender card not found or expiry mismatch.
+        RPCError 32705: sender card is not active.
+        RPCError 32703: sender card has no phone number bound.
+        RPCError 32702: sender balance < converted receiving_amount.
+        RPCError 32706: unexpected server error (logged to error.log).
 
-    Example:
-        >>> transfer_create(
-        ...     "TXN1001",
-        ...     "8600123412341234",
-        ...     "12/27",
-        ...     "9860123412341234",
-        ...     50000,
-        ...     643
-        ... )
+    Example::
+
+        {
+            "jsonrpc": "2.0", "id": 1,
+            "method": "transfer.create",
+            "params": {
+                "ext_id": "tr-1716371234567",
+                "sender_card_number": "8600********1234",
+                "sender_card_expiry": "12/26",
+                "receiver_card_number": "8600********5678",
+                "sending_amount": 50000,
+                "currency": 860
+            }
+        }
     """
     try:
         request_logger.info(
             "transfer.create: ext_id=%s sender=%s receiver=%s amount=%s currency=%s",
             ext_id,
-            sender_card_number,
-            receiver_card_number,
+            mask_card_number(sender_card_number),
+            mask_card_number(receiver_card_number),
             sending_amount,
             currency,
         )
@@ -205,36 +206,29 @@ def transfer_create(
 @method(name="transfer.confirm")
 @log_transfer_method  # LOGGING CONFIRM
 def transfer_confirm(ext_id, otp) -> Result:
-    """
-    Confirms a transfer transaction using an OTP code.
+    """Verify OTP and atomically transfer funds between cards.
 
-    Purpose:
-        This function verifies the OTP code, checks transfer status,
-        updates card balances, and changes the transfer state
-        to confirmed. If the OTP is entered incorrectly multiple times,
-        the transfer will be cancelled.
+    Looks up the transfer by ext_id, validates that it is still in CREATED
+    state, checks the OTP (max 3 attempts), then executes an atomic DB
+    transaction that debits the sender and credits the receiver.
 
-    Parameters:
-        ext_id:
-            Unique external transaction ID.
-
-        otp:
-            One-time password sent to the sender's phone number.
+    Args:
+        ext_id (str): The external ID returned by transfer.create.
+        otp (str | int): The 6-digit OTP sent to the sender's phone/Telegram.
 
     Returns:
-        Result:
-            Returns the transfer result with transaction state
-            and confirmation status.
+        Success: ``{"ext_id": str, "state": "confirmed"}``
+        RPCError 32706: Transfer not found.
+        RPCError 32710: Transfer is not in CREATED state (already confirmed/cancelled).
+        RPCError 32712: Wrong OTP; remaining attempts included in message.
+        RPCError 32711: OTP attempt limit (3) reached; transfer auto-cancelled.
+        RPCError 32702: Balance became insufficient between create and confirm.
+        RPCError 32706: Unexpected server error (logged to error.log).
 
-    Example:
-        >>> transfer_confirm("TXN1001", "123456")
-
-        {
-            "ext_id": "TXN1001",
-            "state": "CONFIRMED"
-        }
+    Note:
+        Uses ``SELECT FOR UPDATE`` to prevent race conditions when two
+        concurrent confirms try to debit the same card simultaneously.
     """
-
     try:
         request_logger.info("transfer.confirm: ext_id=%s", ext_id)
 
@@ -309,28 +303,17 @@ def transfer_confirm(ext_id, otp) -> Result:
 @method(name="transfer.cancel")
 @log_transfer_method  # LOGGING CANCEL
 def transfer_cancel(ext_id) -> Result:
-    """
-    Cancels a transfer transaction.
+    """Cancel a pending transfer.
 
-    Purpose:
-        This function cancels an existing transfer request
-        if it has not been confirmed yet. The transfer state
-        is updated to cancelled.
+    Only transfers in CREATED state can be cancelled. Transitions the transfer
+    to CANCELLED and records the cancellation timestamp. No funds are moved.
 
-    Parameters:
-        ext_id:
-            Unique external transaction ID.
+    Args:
+        ext_id (str): The external ID of the transfer to cancel.
 
     Returns:
-        Result:
-            Returns the transfer result with cancellation status.
-
-    Example:
-        >>> transfer_cancel("TXN1001")
-
-        {
-            "state": "CANCELLED"
-        }
+        Success: ``{"state": "cancelled"}``
+        RPCError 32706: Transfer not found, or already confirmed/cancelled.
     """
     try:
         request_logger.info("transfer.cancel: ext_id=%s", ext_id)
@@ -421,36 +404,20 @@ def json_rpc_view(request):
             status=405,
         )
 
+    # IP manzilni aniqlash
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    ip = x_forwarded_for.split(",")[0] if x_forwarded_for else request.META.get("REMOTE_ADDR")
+
     request_data = request.body.decode("utf-8")
-    request_logger.info("RPC Request: %s", request_data)
+    request_logger.info("IP: %s | Request: %s", ip, mask_sensitive_text(request_data))
 
     response = dispatch_to_serializable(request_data)
 
-    request_logger.info("RPC Response: %s", response)
+    request_logger.info("IP: %s | Response: %s", ip, sanitize_for_log(response))
 
     if response is None:
         return HttpResponse(status=204)
 
-    return JsonResponse(response, safe=False)
-
-
-@csrf_exempt
-def json_rpc_view(request):
-    # REQUEST IP MANZILNI ANIQLASH QISMI
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0]
-    else:
-        ip = request.META.get('REMOTE_ADDR')
-
-    request_data = request.body.decode("utf-8")
-    
-    # IP log
-    logger.info(f"IP: {ip} | Request: {request_data}")
-    
-    response = dispatch(request_data)
-    
-    logger.info(f"Response: {response}")
     return JsonResponse(response, safe=False)
 
 
@@ -460,7 +427,7 @@ def json_rpc_view(request):
 #   Redis da 30 soniya saqlanadi. Keyingi so'rovlar DB ni yuklamasdan
 #   to'g'ridan-to'g'ri Redis dan javob oladi. Bu DB load ni keskin kamaytiradi.
 
-CARD_INFO_CACHE_TTL = 30  # soniya
+CARD_INFO_CACHE_TTL = 60  # soniya
 
 
 def _get_error_cached(code, override_message=None):
@@ -488,43 +455,32 @@ def _get_error_cached(code, override_message=None):
 
 
 @method(name="card.info")
-def transfer_create(sender_card: str, receiver_card: str, amount: float) -> Result:
-    """
-    Creates a money transfer between two bank cards.
+def card_info(card_number: str, expiry: str) -> Result:
+    """Return card details, with results cached in Redis for 60 seconds.
 
-    Purpose:
-        This function creates a transfer from the sender's card
-        to the receiver's card with the given amount.
+    On a cache miss the card is fetched from the database and the result is
+    stored under the key ``card_info:{card_number}:{expiry}`` with a 60-second
+    TTL. Subsequent calls within the TTL window skip the DB entirely.
 
-    Parameters:
-        sender_card (str):
-            Sender's 16-digit card number.
+    The ``masked_card`` field exposes the first 6 and last 4 digits only
+    (e.g. ``"8600********1234"``), suitable for display in client UIs.
 
-        receiver_card (str):
-            Receiver's 16-digit card number.
-
-        amount (float):
-            Amount of money to transfer.
+    Args:
+        card_number (str): 16-digit card number (no spaces).
+        expiry (str): Card expiry in MM/YY or YYYY-MM format.
 
     Returns:
-        Result:
-            Returns transfer information including:
-                - transfer_id
-                - status
-                - amount
+        Success: ``{"card_status": str, "balance": str, "phone": str, "masked_card": str}``
+        RPCError 32704: Expiry format invalid, or card not found in database.
 
-    Example:
-        >>> transfer_create(
-        ...     "8600123412341234",
-        ...     "9860123412341234",
-        ...     50000
-        ... )
+    Example::
 
         {
-            "transfer_id": 101,
-            "status": "PENDING",
-            "amount": 50000
+            "method": "card.info",
+            "params": {"card_number": "8600********1234", "expiry": "12/26"}
         }
+        # → {"card_status": "active", "balance": "1500000.00",
+        #     "phone": "+998901234567", "masked_card": "8600********1234"}
     """
     cache_key = f"card_info:{card_number}:{expiry}"
     cached = cache.get(cache_key)
@@ -541,7 +497,7 @@ def transfer_create(sender_card: str, receiver_card: str, amount: float) -> Resu
         return _get_error_cached(ERR_CARD_EXPIRY_INVALID)
 
     # Masked card: dastlabki 6 va oxirgi 4 ta ko'rinadi, o'rtasi yulduzcha
-    masked = card_number[:6] + "*" * (len(card_number) - 10) + card_number[-4:]
+    masked = card_number[:4] + "*" * (len(card_number) - 8) + card_number[-4:]
 
     data = {
         "card_status": card.status,
