@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from jsonrpcserver import Error as RPCError
 from jsonrpcserver import Result, Success, dispatch_to_serializable, method, dispatch
+from django_ratelimit.core import is_ratelimited
 
 from cards.models import Card
 from cards.utils import format_expire
@@ -407,6 +408,25 @@ def json_rpc_view(request):
     ip = x_forwarded_for.split(",")[0] if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
     request_data = request.body.decode("utf-8")
+    if '"method":"transfer.confirm"' in request_data.replace(" ", ""):
+        if is_ratelimited(
+            request=request,
+            group="transfer_confirm",
+            key="ip",
+            rate="5/m",
+            increment=True,
+        ):
+            return JsonResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": 429,
+                        "message": "Too many requests",
+                    },
+                },
+                status=429,
+            )
     request_logger.info("IP: %s | Request: %s", ip, mask_sensitive_text(request_data))
 
     response = dispatch_to_serializable(request_data)
