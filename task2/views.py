@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from jsonrpcserver import Error as RPCError
 from jsonrpcserver import Result, Success, dispatch_to_serializable, method, dispatch
+from django_ratelimit.core import is_ratelimited
 
 from cards.models import Card
 from cards.utils import format_expire
@@ -72,8 +73,7 @@ def _normalize_expiry(expiry_str):
         return format_expire(expiry_str)
     except Exception:
         return None
-
-
+    
 @method(name="transfer.create")
 @log_transfer_method  # LOGGING CREATE
 def transfer_create(
@@ -110,7 +110,6 @@ def transfer_create(
         RPCError 32706: unexpected server error (logged to error.log).
 
     Example::
-
         {
             "jsonrpc": "2.0", "id": 1,
             "method": "transfer.create",
@@ -120,7 +119,7 @@ def transfer_create(
                 "sender_card_expiry": "12/26",
                 "receiver_card_number": "8600********5678",
                 "sending_amount": 50000,
-                "currency": 860
+                "currency": 840
             }
         }
     """
@@ -409,6 +408,25 @@ def json_rpc_view(request):
     ip = x_forwarded_for.split(",")[0] if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
     request_data = request.body.decode("utf-8")
+    if '"method":"transfer.confirm"' in request_data.replace(" ", ""):
+        if is_ratelimited(
+            request=request,
+            group="transfer_confirm",
+            key="ip",
+            rate="5/m",
+            increment=True,
+        ):
+            return JsonResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": 429,
+                        "message": "Too many requests",
+                    },
+                },
+                status=429,
+            )
     request_logger.info("IP: %s | Request: %s", ip, mask_sensitive_text(request_data))
 
     response = dispatch_to_serializable(request_data)

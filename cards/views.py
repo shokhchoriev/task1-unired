@@ -1,3 +1,9 @@
-from django.shortcuts import render
+from django.http import JsonResponse
 
-# Create your views here.
+def ratelimit_error(request, exception):
+    return JsonResponse(
+        {
+            "error": "Too many requests"
+        },
+        status=429,
+    )

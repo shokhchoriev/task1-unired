@@ -1,5 +1,4 @@
 # Unired Transfer System
-
 Django + Celery + Redis asosidagi JSON-RPC 2.0 pul o'tkazma platformasi.
 
 ## Tizim tarkibi

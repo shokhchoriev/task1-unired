@@ -80,6 +80,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework",
+    "django_ratelimit",
     "cards",
     "task2",
     "tgbot",
@@ -250,3 +252,5 @@ LOGGING = {
         },
     },
 }
+
+RATELIMIT_VIEW = "cards.views.ratelimit_error"

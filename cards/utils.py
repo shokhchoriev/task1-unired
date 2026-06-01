@@ -174,3 +174,17 @@ def normalize_card_number(card_number):
 
 def normalize_phone(phone):
     return format_phone(phone)
+
+import os
+
+
+def get_env(key, default=None):
+    return os.getenv(key, default)
+
+
+def mask_card(card):
+    return card_mask(card)
+
+
+def mask_otp(otp):
+    return "*" * len(str(otp))
