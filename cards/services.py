@@ -67,15 +67,18 @@ def import_cards_from_excel(uploaded_file, row_filter=None):
                 )
                 continue
 
-            Card.objects.update_or_create(
-                card_number=card_number,
-                defaults={
-                    "expire": expire,
-                    "phone": phone,
-                    "status": status,
-                    "balance": balance,
-                },
-            )
+            from config.security import _search_token
+            try:
+                card = Card.objects.get(card_number_hash=_search_token(card_number))
+                card.expire = expire
+                card.phone = phone
+                card.status = status
+                card.balance = balance
+                card.save(update_fields=["expire", "phone", "status", "balance"])
+            except Card.DoesNotExist:
+                card = Card(tg_id="", expire=expire, phone=phone, status=status, balance=balance)
+                card.card_number = card_number
+                card.save()
             success += 1
         except Exception as exc:
             errors.append(f"Row {row_number}: {exc}")

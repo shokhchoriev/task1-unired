@@ -230,7 +230,12 @@ class TransferRPCIntegrationTests(TestCase):
 
     def setUp(self):
         call_command("populate_errors", verbosity=0)
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        self.user = User.objects.create_user(username="rpc_http_user", password="pass98765")
         self.client = Client()
+        self.client.login(username="rpc_http_user", password="pass98765")
+        self.secret = self.user.userprofile.secret
         self.sender = Card.objects.create(
             tg_id="30001",
             card_number="8600999911112222",
@@ -247,20 +252,24 @@ class TransferRPCIntegrationTests(TestCase):
             status="active",
             balance=Decimal("0.00"),
         )
-        self.url = "/task2/api/v1/rpc/"
+        self.url = "/task2/"
 
     def _rpc(self, method_name, params, request_id=1):
+        from config.security import generate_hash
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method_name,
+                "params": params,
+            }
+        )
+        sign = generate_hash(body, self.secret)
         response = self.client.post(
             self.url,
-            data=json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "method": method_name,
-                    "params": params,
-                }
-            ),
+            data=body,
             content_type="application/json",
+            HTTP_REQUEST_SIGN=sign,
         )
         self.assertEqual(response.status_code, 200)
         return response.json()
