@@ -37,7 +37,7 @@ def human_card(card_number):
 
 def card_mask(card_number):
     digits = format_card(card_number)
-    return f"{digits[:4]}********{digits[-4:]}"
+    return f"{'*' * (len(digits) - 4)}{digits[-4:]}"
 
 
 PHONE_REGEX = re.compile(r"^\+998\d{9}$")

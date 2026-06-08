@@ -26,7 +26,8 @@ class Command(BaseCommand):
                 card_number = format_card(options["card_number"])
             except ValidationError as exc:
                 raise CommandError(str(exc)) from exc
-            queryset = queryset.filter(card_number=card_number)
+            from config.security import _search_token
+            queryset = queryset.filter(card_number_hash=_search_token(card_number))
 
         if options["phone"]:
             try:
