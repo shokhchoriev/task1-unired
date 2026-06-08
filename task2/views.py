@@ -14,6 +14,7 @@ from django_ratelimit.core import is_ratelimited
 
 from cards.models import Card
 from cards.utils import format_expire
+from config.security import _search_token
 
 from .models import Error, Transfer
 from .utils import (
@@ -149,7 +150,7 @@ def transfer_create(
 
         try:
             sender_card = Card.objects.get(
-                card_number=sender_card_number,
+                card_number_hash=_search_token(sender_card_number),
                 expire=normalized_expiry,
             )
         except Card.DoesNotExist:
@@ -162,7 +163,7 @@ def transfer_create(
             return get_error(ERR_SMS_NOT_BIND)
 
         try:
-            receiver_card = Card.objects.get(card_number=receiver_card_number)
+            receiver_card = Card.objects.get(card_number_hash=_search_token(receiver_card_number))
         except Card.DoesNotExist:
             return get_error(ERR_UNKNOWN)
 
@@ -265,10 +266,10 @@ def transfer_confirm(ext_id, otp) -> Result:
         try:
             with transaction.atomic():
                 sender_card = Card.objects.select_for_update().get(
-                    card_number=transfer.sender_card_number
+                    card_number_hash=_search_token(transfer.sender_card_number)
                 )
                 receiver_card = Card.objects.select_for_update().get(
-                    card_number=transfer.receiver_card_number
+                    card_number_hash=_search_token(transfer.receiver_card_number)
                 )
 
                 if sender_card.balance < transfer.receiving_amount:
@@ -510,7 +511,7 @@ def card_info(card_number: str, expiry: str) -> Result:
         return _get_error_cached(ERR_CARD_EXPIRY_INVALID)
 
     try:
-        card = Card.objects.get(card_number=card_number, expire=normalized)
+        card = Card.objects.get(card_number_hash=_search_token(card_number), expire=normalized)
     except Card.DoesNotExist:
         return _get_error_cached(ERR_CARD_EXPIRY_INVALID)
 

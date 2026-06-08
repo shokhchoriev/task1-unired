@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "django_ratelimit",
+    "accounts",
     "cards",
     "task2",
     "tgbot",
@@ -95,6 +96,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "config.middleware.RequestSignatureMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -170,6 +172,17 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+if not ENCRYPTION_KEY and DEBUG:
+    # Derive a stable Fernet-compatible key from SECRET_KEY for local dev/test.
+    import base64
+    import hashlib as _hs
+    ENCRYPTION_KEY = base64.urlsafe_b64encode(
+        _hs.sha256(SECRET_KEY.encode()).digest()
+    ).decode()
+
+SIGNATURE_SECRET = os.getenv("SIGNATURE_SECRET", "")
+# Paths that skip signature verification (admin uses its own IP restriction)
+SIGNATURE_EXEMPT_PATHS = ["/admin/"]
 
 # Telegram report chat ID – set via env in production
 TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "")

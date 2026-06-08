@@ -13,8 +13,9 @@ def get_user_cards(tg_id):
 @sync_to_async
 def get_card_by_number(card_number):
     from cards.models import Card
+    from config.security import _search_token
     try:
-        return Card.objects.get(card_number=card_number)
+        return Card.objects.get(card_number_hash=_search_token(card_number))
     except Card.DoesNotExist:
         return None
 
@@ -23,14 +24,15 @@ def get_card_by_number(card_number):
 def create_card_db(tg_id, card_number, expire, phone, balance):
     from cards.models import Card
     try:
-        card = Card.objects.create(
+        card = Card(
             tg_id=str(tg_id),
-            card_number=card_number,
             expire=expire,
             phone=phone,
             status="active",
             balance=Decimal(str(balance)),
         )
+        card.card_number = card_number
+        card.save()
         return card, None
     except Exception as exc:
         return None, str(exc)
@@ -68,9 +70,7 @@ def get_user_history(tg_id, limit=10):
     from task2.models import Transfer
     from django.db.models import Q
 
-    card_numbers = list(
-        Card.objects.filter(tg_id=str(tg_id)).values_list("card_number", flat=True)
-    )
+    card_numbers = [c.card_number for c in Card.objects.filter(tg_id=str(tg_id))]
     if not card_numbers:
         return []
     return list(
@@ -91,7 +91,8 @@ def link_card_to_tg(tg_id, card_number, expire_raw):
         return None, "Muddat noto'g'ri formatda. MM/YY shaklida kiriting."
 
     try:
-        card = Card.objects.get(card_number=card_number, expire=normalized)
+        from config.security import _search_token
+        card = Card.objects.get(card_number_hash=_search_token(card_number), expire=normalized)
     except Card.DoesNotExist:
         return None, "Karta topilmadi. Raqam yoki muddat noto'g'ri."
 
