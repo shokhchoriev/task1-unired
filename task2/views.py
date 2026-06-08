@@ -1,3 +1,5 @@
+import functools
+import inspect
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -13,9 +15,16 @@ from jsonrpcserver import Result, Success, dispatch_to_serializable, method, dis
 from django_ratelimit.core import is_ratelimited
 
 from cards.models import Card
-from cards.utils import format_expire
+from cards.utils import format_expire, hash_request
 
 from .models import Error, Transfer
+from .serializers import (
+    CardInfoSerializer,
+    ExtIdSerializer,
+    TransferConfirmSerializer,
+    TransferCreateSerializer,
+    TransferHistorySerializer,
+)
 from .utils import (
     FakeNotificationService,
     calculate_exchange,
@@ -57,6 +66,47 @@ def get_error(code, override_message=None):
         return RPCError(code=code, message=override_message or "Unknown error")
 
 
+def validate_params(serializer_class):
+    """Validate JSON-RPC params with a ``serializers.Serializer`` before dispatch.
+
+    Binds the incoming positional/keyword args to the handler's signature,
+    runs them through ``serializer_class``, and short-circuits with
+    RPCError 32706 (first field error as the message) on failure. On success
+    the original args/kwargs are forwarded unchanged — the serializer acts as
+    a validation gate, not a data transformer, so handler logic/types stay
+    exactly as before.
+
+    Args:
+        serializer_class (type[serializers.Serializer]): Serializer describing
+            the expected shape of the JSON-RPC ``params`` object.
+
+    Returns:
+        Callable: Decorator to place under ``@method(name=...)``.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                bound = inspect.signature(func).bind_partial(*args, **kwargs)
+                payload = dict(bound.arguments)
+            except TypeError:
+                payload = kwargs
+
+            serializer = serializer_class(data=payload)
+            if not serializer.is_valid():
+                field, messages = next(iter(serializer.errors.items()))
+                return get_error(
+                    ERR_UNKNOWN,
+                    override_message=f"Invalid {field}: {messages[0]}",
+                )
+
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def _parse_amount(value):
     try:
         amount = Decimal(str(value))
@@ -76,6 +126,7 @@ def _normalize_expiry(expiry_str):
     
 @method(name="transfer.create")
 @log_transfer_method  # LOGGING CREATE
+@validate_params(TransferCreateSerializer)
 def transfer_create(
     ext_id,
     sender_card_number,
@@ -204,6 +255,7 @@ def transfer_create(
 
 @method(name="transfer.confirm")
 @log_transfer_method  # LOGGING CONFIRM
+@validate_params(TransferConfirmSerializer)
 def transfer_confirm(ext_id, otp) -> Result:
     """Verify OTP and atomically transfer funds between cards.
 
@@ -301,6 +353,7 @@ def transfer_confirm(ext_id, otp) -> Result:
 
 @method(name="transfer.cancel")
 @log_transfer_method  # LOGGING CANCEL
+@validate_params(ExtIdSerializer)
 def transfer_cancel(ext_id) -> Result:
     """Cancel a pending transfer.
 
@@ -339,6 +392,7 @@ def transfer_cancel(ext_id) -> Result:
         return get_error(ERR_UNKNOWN)
     
 @method(name="transfer.state")
+@validate_params(ExtIdSerializer)
 def transfer_state(ext_id) -> Result:
     try:
         transfer = get_transfer_by_ext_id(ext_id)
@@ -351,6 +405,7 @@ def transfer_state(ext_id) -> Result:
 
 
 @method(name="transfer.history")
+@validate_params(TransferHistorySerializer)
 def transfer_history(
     card_number=None,
     start_date=None,
@@ -391,6 +446,32 @@ def transfer_history(
         return get_error(ERR_UNKNOWN)
 
 
+def _redis_rate_limited(ip, method_name, limit=5, window=60):
+    """Custom Redis-backed counter limiter, scoped per ``hash_request(ip, method)``.
+
+    Complements ``django_ratelimit`` (used for ``transfer.confirm``) with the
+    "implement Redis counter logic based on IP" approach from the spec — used
+    to throttle ``transfer.create`` since it triggers an OTP send (SMS +
+    Telegram) and is otherwise an open vector for SMS-bombing abuse.
+
+    Args:
+        ip (str): Caller's IP address.
+        method_name (str): JSON-RPC method name, e.g. ``"transfer.create"``.
+        limit (int): Max requests allowed within ``window`` seconds.
+        window (int): Sliding window size in seconds.
+
+    Returns:
+        bool: ``True`` once the caller has exceeded ``limit`` requests in the window.
+    """
+    cache_key = f"ratelimit:{hash_request(ip, method_name)}"
+    try:
+        count = cache.incr(cache_key)
+    except ValueError:
+        cache.set(cache_key, 1, timeout=window)
+        count = 1
+    return count > limit
+
+
 @csrf_exempt
 def json_rpc_view(request):
     if request.method != "POST":
@@ -408,25 +489,34 @@ def json_rpc_view(request):
     ip = x_forwarded_for.split(",")[0] if x_forwarded_for else request.META.get("REMOTE_ADDR")
 
     request_data = request.body.decode("utf-8")
-    if '"method":"transfer.confirm"' in request_data.replace(" ", ""):
-        if is_ratelimited(
+    compact_request = request_data.replace(" ", "")
+    too_many_requests = False
+
+    if '"method":"transfer.confirm"' in compact_request:
+        too_many_requests = is_ratelimited(
             request=request,
             group="transfer_confirm",
             key="ip",
             rate="5/m",
             increment=True,
-        ):
-            return JsonResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {
-                        "code": 429,
-                        "message": "Too many requests",
-                    },
+        )
+    elif '"method":"transfer.create"' in compact_request:
+        # OTP yuborilgani uchun (SMS + Telegram), Redis counter bilan cheklaymiz
+        too_many_requests = _redis_rate_limited(ip, "transfer.create", limit=5, window=60)
+
+    if too_many_requests:
+        return JsonResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": 429,
+                    "message": "Too many requests",
                 },
-                status=429,
-            )
+            },
+            status=429,
+        )
+
     request_logger.info("IP: %s | Request: %s", ip, mask_sensitive_text(request_data))
 
     response = dispatch_to_serializable(request_data)
@@ -473,6 +563,7 @@ def _get_error_cached(code, override_message=None):
 
 
 @method(name="card.info")
+@validate_params(CardInfoSerializer)
 def card_info(card_number: str, expiry: str) -> Result:
     """Return card details, with results cached in Redis for 60 seconds.
 
