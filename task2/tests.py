@@ -103,7 +103,7 @@ class TransferRPCUnitTests(TestCase):
             sending_amount="10.00",
             currency=643,
         )
-        self._assert_error(result, 32704)
+        self._assert_error(result, 32706)
 
     def test_transfer_create_insufficient_balance(self):
         result = transfer_create(
