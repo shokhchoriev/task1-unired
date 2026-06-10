@@ -14,7 +14,7 @@ class TransferCreateSerializer(serializers.Serializer):
 
     ext_id = serializers.CharField(max_length=100, allow_blank=False)
     sender_card_number = serializers.RegexField(CARD_NUMBER_REGEX)
-    sender_card_expiry = serializers.CharField(max_length=10, allow_blank=False)
+    sender_card_expiry = serializers.RegexField(r'^(0[1-9]|1[0-2])\/\d{2}$', max_length=5)
     receiver_card_number = serializers.RegexField(CARD_NUMBER_REGEX)
     sending_amount = serializers.CharField(max_length=32, allow_blank=False)
     currency = serializers.IntegerField()
@@ -56,4 +56,4 @@ class CardInfoSerializer(serializers.Serializer):
     """
 
     card_number = serializers.RegexField(CARD_NUMBER_REGEX)
-    expiry = serializers.CharField(max_length=10, allow_blank=False)
+    expiry = serializers.RegexField(r'^(0[1-9]|1[0-2])\/\d{2}$', max_length=5)

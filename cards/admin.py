@@ -65,8 +65,10 @@ class RichestCardsFilter(admin.SimpleListFilter):
     def queryset(self, request, queryset):
         if self.value() != "top5":
             return queryset
-
-        return queryset.order_by("-balance")[:5]
+        top5_ids = list(
+            Card.objects.order_by("-balance").values_list("pk", flat=True)[:5]
+        )
+        return queryset.filter(pk__in=top5_ids)
 
 
 class TopTransactionsFilter(admin.SimpleListFilter):
@@ -94,8 +96,11 @@ class TopTransactionsFilter(admin.SimpleListFilter):
                     ORDER BY SUM(tx_count) DESC
                     LIMIT 5
                 """)
-                card_numbers = [row[0] for row in cursor.fetchall()]
-            return queryset.filter(card_number__in=card_numbers)
+                plain_numbers = [row[0] for row in cursor.fetchall()]
+            # Convert plain card numbers (from Transfer) to search hashes
+            from config.security import _search_token
+            hashes = [_search_token(cn) for cn in plain_numbers if cn]
+            return queryset.filter(card_number_hash__in=hashes)
         except Exception:
             return queryset.none()
 
@@ -123,13 +128,12 @@ class CardAdmin(admin.ModelAdmin):
 
     actions = ["export_selected_cards"]
 
-    search_fields = (
-        "card_number",
-        "phone",
-    )
+    # card_number_hash is the only searchable DB column; phone is still plain.
+    search_fields = ("phone",)
 
     @admin.display(description="Card Number")
     def readable_card_number(self, obj):
+        # Decrypt via property then apply ****1234 mask
         return card_mask(obj.card_number)
 
     @admin.display(description="Phone")
@@ -173,7 +177,7 @@ class CardAdmin(admin.ModelAdmin):
         sheet.title = "Cards"
         sheet.append(["card_number", "expire", "phone", "status", "balance"])
 
-        for card in queryset.order_by("card_number"):
+        for card in queryset.order_by("card_number_hash"):
             sheet.append([
                 card_mask(card.card_number),
                 str(card.expire),
@@ -203,7 +207,7 @@ class CardAdmin(admin.ModelAdmin):
         sheet.title = "Selected Cards"
         sheet.append(["card_number", "expire", "phone", "status", "balance"])
 
-        for card in queryset.order_by("card_number"):
+        for card in queryset.order_by("card_number_hash"):
             sheet.append([
                 card_mask(card.card_number),
                 str(card.expire),
@@ -220,58 +224,59 @@ class CardAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
         extra_context["current_query_string"] = request.GET.urlencode()
-        
+
         try:
-            # SQL Statistikalar bo'limi
+            from task2.models import Transfer
+            from config.security import _search_token
+
+            # 1. Duplicate cards (by hash — same hash means same card number)
             with connection.cursor() as cursor:
-                # 1. Takrorlangan kartalar soni
                 cursor.execute("""
                     SELECT COUNT(*) FROM (
-                        SELECT card_number FROM cards_card 
-                        GROUP BY card_number HAVING COUNT(*) > 1
+                        SELECT card_number_hash FROM cards_card
+                        GROUP BY card_number_hash HAVING COUNT(*) > 1
                     ) AS dups
                 """)
-                extra_context['duplicate_cards_count'] = cursor.fetchone()[0]
+                extra_context["duplicate_cards_count"] = cursor.fetchone()[0]
 
-                # 2. Unikal jo'natuvchilar (sender_card_number)
+            # 2. Unique card numbers that appear in any Transfer row
+            transfer_plain = set(
+                Transfer.objects.values_list("sender_card_number", flat=True)
+            ) | set(
+                Transfer.objects.values_list("receiver_card_number", flat=True)
+            )
+            transfer_plain.discard(None)
+            extra_context["unique_transfer_cards_count"] = len(transfer_plain)
+            extra_context["unique_senders_count"] = extra_context["unique_transfer_cards_count"]
+
+            # 3. Cards that never appear in any transfer
+            if transfer_plain:
+                transfer_hashes = {_search_token(cn) for cn in transfer_plain}
+                extra_context["unused_cards_count"] = Card.objects.exclude(
+                    card_number_hash__in=transfer_hashes
+                ).count()
+            else:
+                extra_context["unused_cards_count"] = Card.objects.count()
+
+            # 4. Unique sender phones
+            with connection.cursor() as cursor:
                 cursor.execute(
-                    """
-                    SELECT COUNT(DISTINCT card_number) FROM (
-                        SELECT sender_card_number AS card_number FROM task2_transfer
-                        UNION
-                        SELECT receiver_card_number AS card_number FROM task2_transfer
-                    ) AS all_cards
-                    """
+                    "SELECT COUNT(DISTINCT sender_phone) FROM task2_transfer"
                 )
-                extra_context['unique_transfer_cards_count'] = cursor.fetchone()[0]
-                extra_context['unique_senders_count'] = extra_context['unique_transfer_cards_count']
+                extra_context["unique_sender_phones"] = cursor.fetchone()[0]
 
-                # 3. Ishlatilmagan kartalar (Transferda qatnashmaganlar)
-                cursor.execute("""
-                    SELECT COUNT(*) FROM cards_card
-                    WHERE card_number NOT IN (
-                        SELECT DISTINCT sender_card_number FROM task2_transfer
-                        UNION
-                        SELECT DISTINCT receiver_card_number FROM task2_transfer
-                    )
-                """)
-                extra_context['unused_cards_count'] = cursor.fetchone()[0]
+            # 5. Cards with balance > 1000
+            extra_context["high_balance_count"] = Card.objects.filter(
+                balance__gt=1000
+            ).count()
 
-                # 4. Unikal jo'natuvchi telefonlar soni
-                cursor.execute("SELECT COUNT(DISTINCT sender_phone) FROM task2_transfer")
-                extra_context['unique_sender_phones'] = cursor.fetchone()[0]
-
-                # 5. Balansi 1000 dan yuqori kartalar
-                cursor.execute("SELECT COUNT(*) FROM cards_card WHERE balance > 1000")
-                extra_context['high_balance_count'] = cursor.fetchone()[0]
         except Exception:
-            # Agar jadval hali yaratilmagan bo'lsa yoki SQLda xato bo'lsa statistikalar 0 ko'rinadi
             pass
 
         extra_context["import_excel_url"] = reverse("admin:cards_card_import_excel")
         extra_context["export_csv_url"] = reverse("admin:cards_card_export_xlsx")
         extra_context["all_cards_url"] = reverse("admin:cards_card_changelist")
-        
+
         return super().changelist_view(request, extra_context=extra_context)
 
     def get_import_filter(self, request):
@@ -305,9 +310,10 @@ class CardAdmin(admin.ModelAdmin):
                 top5_card_numbers = []
         if richest_cards == "top5":
             try:
-                top5_card_numbers = list(
-                    Card.objects.order_by("-balance").values_list("card_number", flat=True)[:5]
-                )
+                # Decrypt via property to get plain numbers for row comparison
+                top5_card_numbers = [
+                    c.card_number for c in Card.objects.order_by("-balance")[:5]
+                ]
             except Exception:
                 top5_card_numbers = []
 

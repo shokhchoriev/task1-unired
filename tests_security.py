@@ -1,10 +1,15 @@
+import json
 from pathlib import Path
 
 from django.conf import settings
-from django.test import Client, SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.test import Client, SimpleTestCase, TestCase
 from dotenv import dotenv_values
 
 from config.helpers import mask_card_number, mask_otp
+from config.security import generate_hash
+
+User = get_user_model()
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -122,3 +127,55 @@ class SecurityConfigurationTests(SimpleTestCase):
         )
 
         self.log_ok("Masking helperlari testi muvaffaqiyatli o'tdi")
+
+
+class RequestSignatureTests(TestCase):
+    """5.3: HMAC-SHA256 request signing middleware."""
+
+    RPC_URL = "/task2/"
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="sigtest", password="testpass123")
+        # UserProfile auto-created by post_save signal; fetch the secret
+        self.secret = self.user.userprofile.secret
+        self.client.login(username="sigtest", password="testpass123")
+        self.body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "transfer.state",
+                "params": {"ext_id": "nonexistent-ext-id"},
+            }
+        ).encode()
+
+    def test_wrong_signature_returns_403(self):
+        """A request with an incorrect request-sign header must be rejected."""
+        response = self.client.post(
+            self.RPC_URL,
+            data=self.body,
+            content_type="application/json",
+            HTTP_REQUEST_SIGN="deadbeefdeadbeefdeadbeefdeadbeef",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("error", response.json())
+
+    def test_missing_signature_returns_403(self):
+        """A request with no request-sign header must be rejected."""
+        response = self.client.post(
+            self.RPC_URL,
+            data=self.body,
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"], "Missing signature")
+
+    def test_correct_signature_passes(self):
+        """A request signed with the user's secret must not be rejected by the middleware."""
+        correct_sign = generate_hash(self.body.decode(), self.secret)
+        response = self.client.post(
+            self.RPC_URL,
+            data=self.body,
+            content_type="application/json",
+            HTTP_REQUEST_SIGN=correct_sign,
+        )
+        self.assertNotEqual(response.status_code, 403)
