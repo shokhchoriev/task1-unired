@@ -268,6 +268,7 @@ LOGGING = {
             "propagate": False,
         },
     },
+
 }
 
 RATELIMIT_VIEW = "cards.views.ratelimit_error"
