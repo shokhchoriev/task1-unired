@@ -3,7 +3,8 @@ from django.http import HttpResponse
 from django.utils.html import format_html
 from openpyxl import Workbook
 
-from .models import Error, Transfer
+
+from .models import Error, Transfer, Payment
 
 
 def _mask_card_number(card_number):
@@ -13,6 +14,13 @@ def _mask_card_number(card_number):
     if len(digits) < 8:
         return digits
     return f"{digits[:4]} **** **** {digits[-4:]}"
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ('id', 'ext_id', 'amount', 'status', 'created_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('ext_id', 'id')
+    readonly_fields = ('id', 'created_at')
 
 
 @admin.register(Transfer)
