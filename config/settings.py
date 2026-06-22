@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     "cards",
     "task2",
     "tgbot",
+    "payments",
 ]
 
 MIDDLEWARE = [
@@ -272,3 +273,10 @@ LOGGING = {
 }
 
 RATELIMIT_VIEW = "cards.views.ratelimit_error"
+
+# ─── Payment providers ────────────────────────────────────────────────────────
+PAYME_MERCHANT_ID = os.getenv("PAYME_MERCHANT_ID", "")
+PAYME_SECRET_KEY = os.getenv("PAYME_SECRET_KEY", "")
+PAYME_TEST_MODE = env_bool("PAYME_TEST_MODE", True)
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
