@@ -21,14 +21,23 @@ from tgbot.handlers.card import (
 from tgbot.handlers.common import cancel_conv, help_cmd, my_cards, my_id, start
 from tgbot.handlers.payment import (
     pay_amount_received,
-    pay_card_received,
     pay_currency_selected,
-    pay_expiry_received,
     pay_start,
     payment_status_ext_id_received,
     payment_status_start,
     refund_ext_id_received,
     refund_start,
+)
+from tgbot.handlers.tron import (
+    tron_balance_cmd,
+    tron_confirm,
+    tron_history_cmd,
+    tron_recv_addr,
+    tron_send_amount,
+    tron_send_start,
+    tron_wallet_cmd,
+    trx_buy_amount_received,
+    trx_buy_start,
 )
 from tgbot.handlers.transfer import (
     amount_entered,
@@ -47,16 +56,18 @@ from tgbot.states import (
     LINK_CARD_EXPIRY,
     LINK_CARD_NUMBER,
     PAY_AMOUNT,
-    PAY_CARD_EXPIRY,
-    PAY_CARD_NUMBER,
     PAY_CURRENCY,
     PAY_REFUND_EXT_ID,
     PAY_STATUS_EXT_ID,
+    TRON_CONFIRM,
+    TRON_RECV_ADDR,
+    TRON_SEND_AMOUNT,
     TRF_AMOUNT,
     TRF_CURRENCY,
     TRF_OTP,
     TRF_RECEIVER,
     TRF_SELECT_SENDER,
+    TRX_BUY_AMOUNT,
 )
 
 _CANCEL_FILTER = filters.Regex("^❌ Bekor qilish$")
@@ -128,10 +139,8 @@ def build_application() -> Application:
             MessageHandler(filters.Regex("^💳 Stripe to'lov$"), pay_start),
         ],
         states={
-            PAY_CARD_NUMBER: [MessageHandler(_TEXT, pay_card_received)],
-            PAY_CARD_EXPIRY: [MessageHandler(_TEXT, pay_expiry_received)],
-            PAY_AMOUNT:      [MessageHandler(_TEXT, pay_amount_received)],
-            PAY_CURRENCY:    [CallbackQueryHandler(pay_currency_selected, pattern=r"^pay_currency_")],
+            PAY_AMOUNT:   [MessageHandler(_TEXT, pay_amount_received)],
+            PAY_CURRENCY: [CallbackQueryHandler(pay_currency_selected, pattern=r"^pay_currency_")],
         },
         fallbacks=[
             CommandHandler("cancel", cancel_conv),
@@ -161,6 +170,36 @@ def build_application() -> Application:
         ],
     )
 
+    tron_send_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("tron_send", tron_send_start),
+            MessageHandler(filters.Regex("^🔄 Tron P2P$"), tron_send_start),
+        ],
+        states={
+            TRON_RECV_ADDR:    [MessageHandler(_TEXT, tron_recv_addr)],
+            TRON_SEND_AMOUNT:  [MessageHandler(_TEXT, tron_send_amount)],
+            TRON_CONFIRM:      [MessageHandler(_TEXT, tron_confirm)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_conv),
+            MessageHandler(_CANCEL_FILTER, cancel_conv),
+        ],
+    )
+
+    trx_buy_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("trx_buy", trx_buy_start),
+            MessageHandler(filters.Regex("^💎 TRX Sotib olish$"), trx_buy_start),
+        ],
+        states={
+            TRX_BUY_AMOUNT: [MessageHandler(_TEXT, trx_buy_amount_received)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_conv),
+            MessageHandler(_CANCEL_FILTER, cancel_conv),
+        ],
+    )
+
     app = Application.builder().token(token).build()
 
     # Simple commands
@@ -174,6 +213,12 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.Regex("^💳 Kartalarim$"), my_cards))
     app.add_handler(MessageHandler(filters.Regex("^📋 Tarix$"), history))
     app.add_handler(MessageHandler(filters.Regex("^🪪 Mening ID'm$"), my_id))
+    app.add_handler(MessageHandler(filters.Regex("^💎 Tron Wallet$"), tron_wallet_cmd))
+
+    # Tron commands
+    app.add_handler(CommandHandler("tron_wallet", tron_wallet_cmd))
+    app.add_handler(CommandHandler("tron_balance", tron_balance_cmd))
+    app.add_handler(CommandHandler("tron_history", tron_history_cmd))
 
     # Conversations
     app.add_handler(add_card_conv)
@@ -182,6 +227,8 @@ def build_application() -> Application:
     app.add_handler(pay_conv)
     app.add_handler(payment_status_conv)
     app.add_handler(refund_conv)
+    app.add_handler(tron_send_conv)
+    app.add_handler(trx_buy_conv)
 
     return app
 

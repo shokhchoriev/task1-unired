@@ -7,8 +7,16 @@ def main_menu():
             [KeyboardButton("💳 Kartalarim"), KeyboardButton("➕ Karta qo'shish")],
             [KeyboardButton("💸 O'tkazma"), KeyboardButton("📋 Tarix")],
             [KeyboardButton("🔗 Karta ulash"), KeyboardButton("🪪 Mening ID'm")],
-            [KeyboardButton("💳 Stripe to'lov")],
+            [KeyboardButton("💳 Stripe to'lov"), KeyboardButton("💎 Tron Wallet")],
+            [KeyboardButton("💎 TRX Sotib olish"), KeyboardButton("🔄 Tron P2P")],
         ],
+        resize_keyboard=True,
+    )
+
+
+def tron_confirm_keyboard():
+    return ReplyKeyboardMarkup(
+        [["✅ Tasdiqlash", "❌ Bekor qilish"]],
         resize_keyboard=True,
     )
 

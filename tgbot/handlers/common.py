@@ -16,7 +16,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💸 /transfer — O'tkazma qilish\n"
         "📋 /history — O'tkazmalar tarixi\n"
         "🪪 /myid — Telegram ID ni ko'rish\n"
-        "❌ /cancel — Amalni bekor qilish",
+        "❌ /cancel — Amalni bekor qilish\n\n"
+        "💎 <b>Tron (Nile testnet):</b>\n"
+        "/tron_wallet — Hamyon yaratish / ko'rish\n"
+        "/tron_balance — TRX balansi\n"
+        "/tron_send — TRX yuborish\n"
+        "/tron_history — Oxirgi 10 ta tranzaksiya",
+        parse_mode="HTML",
         reply_markup=main_menu(),
     )
 

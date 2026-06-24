@@ -1,4 +1,5 @@
 amqp==5.3.1
+tronpy==0.6.2
 stripe==15.2.1
 anyio==4.13.0
 asgiref==3.11.1

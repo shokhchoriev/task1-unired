@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     "task2",
     "tgbot",
     "payments",
+    "tron",
 ]
 
 MIDDLEWARE = [
@@ -300,3 +301,10 @@ PAYME_TEST_MODE = env_bool("PAYME_TEST_MODE", True)
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "https://t.me/")
+STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "https://t.me/")
+
+# Tron platform wallet — pre-funded with Nile testnet TRX for TRX purchase delivery
+TRON_PLATFORM_PRIVATE_KEY = os.getenv("TRON_PLATFORM_PRIVATE_KEY", "")
+# USD price per 1 TRX (Nile testnet placeholder rate)
+TRX_PRICE_USD = os.getenv("TRX_PRICE_USD", "0.10")

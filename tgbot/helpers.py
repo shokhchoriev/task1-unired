@@ -105,6 +105,52 @@ def make_ext_id(tg_id):
     return f"tg-{tg_id}-{int(time.time())}"
 
 
+# ─── Tron helpers ─────────────────────────────────────────────────────────────
+
+@sync_to_async
+def get_or_create_tron_wallet(tg_id: int):
+    """Return (Wallet, created: bool). Creates and persists a new wallet if needed."""
+    from tron.models import Wallet
+    from tron.services import generate_wallet
+    try:
+        return Wallet.objects.get(tg_id=str(tg_id)), False
+    except Wallet.DoesNotExist:
+        address, priv_key_hex = generate_wallet()
+        wallet = Wallet(tg_id=str(tg_id), address=address)
+        wallet.private_key_hex = priv_key_hex
+        wallet.save()
+        return wallet, True
+
+
+@sync_to_async
+def get_tron_wallet(tg_id: int):
+    from tron.models import Wallet
+    try:
+        return Wallet.objects.get(tg_id=str(tg_id))
+    except Wallet.DoesNotExist:
+        return None
+
+
+@sync_to_async
+def do_tron_balance(address: str):
+    from tron.services import get_balance
+    return get_balance(address)
+
+
+@sync_to_async
+def do_tron_send(tg_id: int, to_address: str, amount_trx: Decimal):
+    from tron.models import Wallet
+    from tron.services import send_trx
+    wallet = Wallet.objects.get(tg_id=str(tg_id))
+    return send_trx(wallet.private_key_hex, to_address, amount_trx)
+
+
+@sync_to_async
+def do_tron_history(address: str):
+    from tron.services import get_transactions
+    return get_transactions(address)
+
+
 @sync_to_async
 def get_payment_by_ext_id(ext_id: str):
     from payments.models import Payment
@@ -115,17 +161,38 @@ def get_payment_by_ext_id(ext_id: str):
 
 
 @sync_to_async
-def do_stripe_pay(card_number: str, expire: str, amount: str, currency: str, tg_id):
+def do_stripe_checkout_trx(tg_id: int, trx_amount: Decimal):
+    """Create a Stripe Checkout for *trx_amount* TRX at the configured USD rate.
+
+    Returns (checkout_url, payment, usd_amount).  ext_id encodes tg_id and
+    amount-in-sun so the webhook can deliver TRX without a separate lookup.
+    """
+    from django.conf import settings
+    from payments.services import PaymentService
+
+    trx_price_usd = Decimal(str(getattr(settings, "TRX_PRICE_USD", "0.10")))
+    usd_amount = (trx_amount * trx_price_usd).quantize(Decimal("0.01"))
+
+    # Encode trx amount as integer sun (1 TRX = 1_000_000 sun) to avoid dots in ext_id
+    trx_sun = int(trx_amount * Decimal("1000000"))
+    ext_id = f"tg-trx-{tg_id}-{trx_sun}-{int(time.time())}"
+
+    checkout_url, payment = PaymentService().checkout(
+        amount=usd_amount,
+        currency="USD",
+        ext_id=ext_id,
+    )
+    return checkout_url, payment, usd_amount
+
+
+@sync_to_async
+def do_stripe_checkout(amount: str, currency: str, tg_id: int):
     from decimal import Decimal
     from payments.services import PaymentService
-    service = PaymentService()
-    ext_id = f"tg-stripe-{tg_id}-{int(time.time())}"
-    return service.pay(
-        card_number=card_number,
-        expire=expire,
+    ext_id = f"tg-checkout-{tg_id}-{int(time.time())}"
+    return PaymentService().checkout(
         amount=Decimal(amount),
         currency=currency,
-        provider_name="stripe",
         ext_id=ext_id,
     )
 

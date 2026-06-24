@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 
 import stripe
 from django.conf import settings
@@ -135,6 +136,14 @@ def stripe_webhook(request):
                 "Failed to send payment notification for payment pk=%s", updated_payment.pk
             )
 
+        if event_type == "payment_intent.succeeded":
+            try:
+                _deliver_trx_if_buy_payment(updated_payment)
+            except Exception:
+                logger.exception(
+                    "TRX delivery check failed for payment pk=%s", updated_payment.pk
+                )
+
     return HttpResponse(status=200)
 
 
@@ -250,3 +259,71 @@ def stripe_refund(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+# ─── TRX purchase delivery ────────────────────────────────────────────────────
+
+def _deliver_trx_if_buy_payment(payment):
+    """After a successful payment, send TRX if ext_id encodes a TRX purchase.
+
+    ext_id format: tg-trx-{tg_id}-{trx_sun}-{timestamp}
+    trx_sun = int(trx_amount * 1_000_000), avoids decimal dots in the field.
+    """
+    ext_id = str(payment.ext_id)
+    if not ext_id.startswith("tg-trx-"):
+        return
+
+    try:
+        parts = ext_id.split("-")
+        # ["tg", "trx", tg_id, trx_sun, timestamp]
+        tg_id = int(parts[2])
+        trx_sun = int(parts[3])
+        trx_amount = Decimal(trx_sun) / Decimal("1000000")
+    except (IndexError, ValueError):
+        logger.error("Could not parse TRX buy ext_id: %s", ext_id)
+        return
+
+    try:
+        from tron.models import Wallet
+        wallet = Wallet.objects.get(tg_id=str(tg_id))
+    except Exception:
+        logger.error("No Tron wallet found for tg_id=%s (ext_id=%s)", tg_id, ext_id)
+        _notify_telegram(tg_id, "❌ Tron hamyoningiz topilmadi. /tron_wallet orqali yarating.")
+        return
+
+    try:
+        from tron.services import send_trx_from_platform
+        txid, error = send_trx_from_platform(wallet.address, trx_amount)
+    except Exception as exc:
+        logger.exception("TRX send raised for payment pk=%s", payment.pk)
+        _notify_telegram(tg_id, f"⚠️ To'lov qabul qilindi, lekin TRX yuborishda xatolik: {exc}")
+        return
+
+    if error:
+        logger.error("TRX delivery error for payment pk=%s: %s", payment.pk, error)
+        _notify_telegram(tg_id, f"⚠️ To'lov qabul qilindi, lekin TRX yuborishda xatolik: {error}")
+    else:
+        logger.info("TRX delivered: %s TRX → %s (txid=%s)", trx_amount, wallet.address, txid)
+        _notify_telegram(
+            tg_id,
+            f"✅ <b>{trx_amount} TRX hamyoningizga yuborildi!</b>\n"
+            f"📬 Manzil: <code>{wallet.address}</code>\n"
+            f"🔗 TxID: <code>{txid}</code>\n"
+            f"🌐 https://nile.tronscan.org/#/transaction/{txid}",
+        )
+
+
+def _notify_telegram(tg_id: int, text: str):
+    """Fire-and-forget Telegram message via Bot API (synchronous HTTP)."""
+    import requests as _requests
+    try:
+        token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+        if not token:
+            return
+        _requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": tg_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception as exc:
+        logger.error("Telegram notify failed for tg_id=%s: %s", tg_id, exc)

@@ -1,19 +1,16 @@
-import re
 from decimal import Decimal, InvalidOperation
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from tgbot.helpers import (
-    do_stripe_pay,
+    do_stripe_checkout,
     do_stripe_refund,
     get_payment_by_ext_id,
 )
 from tgbot.keyboards import cancel_keyboard, main_menu, payment_currency_keyboard
 from tgbot.states import (
     PAY_AMOUNT,
-    PAY_CARD_EXPIRY,
-    PAY_CARD_NUMBER,
     PAY_CURRENCY,
     PAY_REFUND_EXT_ID,
     PAY_STATUS_EXT_ID,
@@ -27,42 +24,10 @@ STATUS_EMOJIS = {"success": "✅", "failed": "❌", "pending": "⏳", "refunded"
 async def pay_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
-        "💳 <b>Stripe orqali to'lov</b>\n\nKarta raqamini kiriting (16 ta raqam):",
+        "💳 <b>Stripe to'lov</b>\n\nTo'lov miqdorini kiriting:",
         parse_mode="HTML",
         reply_markup=cancel_keyboard(),
     )
-    return PAY_CARD_NUMBER
-
-
-async def pay_card_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "❌ Bekor qilish":
-        return await _pay_cancel(update, context)
-
-    number = update.message.text.strip().replace(" ", "")
-    if not number.isdigit() or len(number) != 16:
-        await update.message.reply_text("❌ Noto'g'ri format. 16 ta raqam kiriting:")
-        return PAY_CARD_NUMBER
-
-    context.user_data["pay_card_number"] = number
-    await update.message.reply_text(
-        "📅 Karta amal qilish muddatini kiriting (MM/YY yoki MM/YYYY):"
-    )
-    return PAY_CARD_EXPIRY
-
-
-async def pay_expiry_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "❌ Bekor qilish":
-        return await _pay_cancel(update, context)
-
-    expire = update.message.text.strip()
-    if not re.match(r"^\d{2}/(\d{2}|\d{4})$", expire):
-        await update.message.reply_text(
-            "❌ Noto'g'ri format. MM/YY yoki MM/YYYY shaklida kiriting:"
-        )
-        return PAY_CARD_EXPIRY
-
-    context.user_data["pay_expire"] = expire
-    await update.message.reply_text("💰 To'lov miqdorini kiriting:")
     return PAY_AMOUNT
 
 
@@ -92,34 +57,34 @@ async def pay_currency_selected(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    currency = query.data.replace("pay_currency_", "")  # USD or UZS
+    currency = query.data.replace("pay_currency_", "")
     tg_id = update.effective_user.id
+    amount = context.user_data["pay_amount"]
 
-    await query.edit_message_text(f"⏳ To'lov amalga oshirilmoqda ({currency})...")
+    await query.edit_message_text(f"⏳ Checkout sessiyasi yaratilmoqda ({currency})...")
 
-    payment = await do_stripe_pay(
-        card_number=context.user_data["pay_card_number"],
-        expire=context.user_data["pay_expire"],
-        amount=context.user_data["pay_amount"],
-        currency=currency,
-        tg_id=tg_id,
-    )
+    checkout_url, payment = await do_stripe_checkout(amount, currency, tg_id)
 
-    if payment.status == "success":
-        text = (
-            f"✅ <b>To'lov muvaffaqiyatli!</b>\n\n"
-            f"💰 {payment.amount} {payment.currency}\n"
-            f"🆔 ext_id: <code>{payment.ext_id}</code>"
+    if not checkout_url:
+        err_msg = payment.error_message or "Noma'lum xato"
+        await query.message.reply_text(
+            f"❌ <b>Xatolik:</b> {err_msg}",
+            parse_mode="HTML",
+            reply_markup=main_menu(),
         )
     else:
-        text = (
-            f"❌ <b>To'lov amalga oshmadi</b>\n\n"
-            f"Xato: {payment.error_message or 'Nomaʼlum xato'}\n"
-            f"🆔 ext_id: <code>{payment.ext_id}</code>"
+        await query.message.reply_text(
+            f"💳 <b>Stripe to'lov</b>\n\n"
+            f"💰 Miqdor: <b>{payment.amount} {payment.currency}</b>\n"
+            f"🆔 ext_id: <code>{payment.ext_id}</code>\n\n"
+            f"Quyidagi tugma orqali to'lovni amalga oshiring:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("💳 Stripe orqali to'lash", url=checkout_url)
+            ]]),
         )
 
     context.user_data.clear()
-    await query.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu())
     return ConversationHandler.END
 
 

@@ -154,31 +154,30 @@ class StripeProvider(BaseProvider):
     """
     Stripe API via the official stripe SDK.
 
-    Charge flow:
-      1. Resolve a PaymentMethod ID (see below)
-      2. stripe.PaymentIntent.create(confirm=True) → create and confirm payment
+    Two payment paths:
 
-    PaymentMethod resolution — test vs. production:
-      * Test mode  (sk_test_*): pm_card_visa is used directly.  No real card data
-        is needed or transmitted; the bot collects card number / expiry for UX only.
-      * Production (sk_live_*): In correct Stripe architecture the client — a web
-        front-end using Stripe.js or a mobile app using the Stripe iOS/Android SDK —
-        tokenises the card locally and sends only a PaymentMethod ID (pm_xxx) to
-        this server.  Raw card numbers must never reach the backend; doing so is a
-        PCI DSS violation.  The `card_number` argument in that path is therefore
-        expected to carry a pm_xxx token, not a PAN.
+    charge()  — used by the REST API (/pay/).  Creates a PaymentMethod from raw
+                card data and immediately confirms a PaymentIntent.  Raw card
+                numbers are acceptable here because this endpoint is server-to-
+                server (API clients, Postman, automated tests).
 
-    ext_id is stored in the PaymentIntent metadata so it is visible in the Stripe
+    create_checkout_session()  — used by the Telegram bot.  Redirects the user
+                to a Stripe-hosted checkout page; no card data ever touches this
+                server.  The resulting PaymentIntent is tracked via webhook.
+
+    ext_id is stored in PaymentIntent metadata so it is visible in the Stripe
     dashboard and echoed back in webhook events.
     """
 
-    # Stripe's built-in test PaymentMethod — always succeeds, no 3DS, Visa network.
-    _TEST_PM = "pm_card_visa"
-
     def __init__(self, secret_key: str):
         self.secret_key = secret_key
-        # Infer test mode from the key prefix so no extra config flag is needed.
-        self.test_mode = secret_key.startswith("sk_test_")
+
+    def _parse_expire(self, expire: str) -> tuple:
+        """MM/YY or MM/YYYY → (month_str, 4-digit-year_str)."""
+        parts = expire.split("/")
+        month = parts[0]
+        year = parts[1] if len(parts[1]) == 4 else f"20{parts[1]}"
+        return month, year
 
     @staticmethod
     def _to_dict(stripe_obj) -> dict:
@@ -191,27 +190,30 @@ class StripeProvider(BaseProvider):
     def charge(
         self,
         card_number: str,
-        expire: str,  # collected for UX only; not sent to Stripe (see class docstring)
+        expire: str,
         amount: Decimal,
         currency: str,
         ext_id: Optional[str] = None,
     ) -> ProviderResult:
         stripe.api_key = self.secret_key
-
-        # In test mode use the predefined pm_card_visa token — no raw card data is
-        # sent to Stripe.  In production `card_number` must already be a PaymentMethod
-        # ID obtained from Stripe.js / the mobile SDK on the client side; the server
-        # never handles raw PANs (PCI DSS requirement).
-        pm_id = self._TEST_PM if self.test_mode else card_number
-
+        exp_month, exp_year = self._parse_expire(expire)
         # Stripe amounts: smallest currency unit (cents for USD; whole units for UZS).
         amount_units = int(amount * 100) if currency.upper() == "USD" else int(amount)
 
         try:
+            pm = stripe.PaymentMethod.create(
+                type="card",
+                card={
+                    "number": card_number,
+                    "exp_month": int(exp_month),
+                    "exp_year": int(exp_year),
+                },
+            )
+
             intent = stripe.PaymentIntent.create(
                 amount=amount_units,
                 currency=currency.lower(),
-                payment_method=pm_id,
+                payment_method=pm.id,
                 confirm=True,
                 payment_method_types=["card"],
                 metadata={"ext_id": str(ext_id)} if ext_id else {},
@@ -242,6 +244,52 @@ class StripeProvider(BaseProvider):
             return ProviderResult(success=False, error=str(exc), raw=exc.json_body or {})
         except Exception:
             logger.exception("StripeProvider.charge unexpected error")
+            return ProviderResult(success=False, error="Unexpected error", raw={})
+
+    def create_checkout_session(
+        self,
+        amount: Decimal,
+        currency: str,
+        ext_id: str,
+        success_url: str,
+        cancel_url: str,
+    ) -> ProviderResult:
+        """
+        Create a Stripe Checkout Session and return its URL.
+
+        The underlying PaymentIntent ID is returned as transaction_id so the
+        caller can store it for webhook reconciliation.
+        """
+        stripe.api_key = self.secret_key
+        amount_units = int(amount * 100) if currency.upper() == "USD" else int(amount)
+
+        try:
+            session = stripe.checkout.Session.create(
+                mode="payment",
+                line_items=[{
+                    "price_data": {
+                        "currency": currency.lower(),
+                        "unit_amount": amount_units,
+                        "product_data": {"name": "To'lov"},
+                    },
+                    "quantity": 1,
+                }],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                payment_intent_data={
+                    "metadata": {"ext_id": ext_id},
+                },
+            )
+            return ProviderResult(
+                success=True,
+                transaction_id=session.payment_intent or "",
+                raw={"url": session.url, "session_id": session.id},
+            )
+        except stripe.error.StripeError as exc:
+            logger.error("Stripe checkout session error: %s", exc)
+            return ProviderResult(success=False, error=str(exc), raw={})
+        except Exception:
+            logger.exception("StripeProvider.create_checkout_session unexpected error")
             return ProviderResult(success=False, error="Unexpected error", raw={})
 
     def refund(self, payment_intent_id: str) -> ProviderResult:
@@ -343,6 +391,62 @@ class PaymentService:
             "updated_at",
         ])
         return payment
+
+    def checkout(
+        self,
+        amount: Decimal,
+        currency: str,
+        ext_id: Optional[str] = None,
+    ):
+        """
+        Create a Stripe Checkout Session for the given amount/currency.
+
+        Returns (checkout_url, Payment).  The Payment record is created with
+        PENDING status and updated with provider_transaction_id after the session
+        is created.  The existing webhook handler (payment_intent.succeeded)
+        reconciles the outcome — no additional webhook event type needed.
+        """
+        from django.conf import settings
+        from .models import Payment
+
+        resolved_ext_id = ext_id or str(uuid.uuid4())
+        success_url = getattr(settings, "STRIPE_SUCCESS_URL", "https://t.me/")
+        cancel_url = getattr(settings, "STRIPE_CANCEL_URL", "https://t.me/")
+
+        payment = Payment.objects.create(
+            ext_id=resolved_ext_id,
+            card_number_hash="",  # no card number for hosted checkout
+            amount=amount,
+            currency=currency,
+            provider=Payment.Provider.STRIPE,
+            status=Payment.Status.PENDING,
+        )
+
+        provider = self._providers.get("stripe")
+        if not isinstance(provider, StripeProvider):
+            payment.status = Payment.Status.FAILED
+            payment.error_message = "Stripe provider not configured"
+            payment.save(update_fields=["status", "error_message", "updated_at"])
+            return "", payment
+
+        result = provider.create_checkout_session(
+            amount=amount,
+            currency=currency,
+            ext_id=resolved_ext_id,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+
+        checkout_url = result.raw.get("url", "")
+        if result.success:
+            payment.provider_transaction_id = result.transaction_id
+        else:
+            payment.status = Payment.Status.FAILED
+            payment.error_message = result.error
+            checkout_url = ""
+
+        payment.save(update_fields=["provider_transaction_id", "status", "error_message", "updated_at"])
+        return checkout_url, payment
 
     def refund(self, payment):
         """Issue a full refund for a successful Stripe payment, update DB atomically."""
