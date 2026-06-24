@@ -14,7 +14,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import httpx
 import stripe
@@ -42,7 +42,7 @@ class BaseProvider(ABC):
         expire: str,
         amount: Decimal,
         currency: str,
-        ext_id: Optional[uuid.UUID] = None,
+        ext_id: Optional[str] = None,
     ) -> ProviderResult:
         """Charge a card and return a ProviderResult."""
 
@@ -92,7 +92,7 @@ class PaymeProvider(BaseProvider):
         expire: str,
         amount: Decimal,
         currency: str,
-        ext_id: Optional[uuid.UUID] = None,
+        ext_id: Optional[str] = None,
     ) -> ProviderResult:
         payme_expire = self._parse_expire(expire)
         amount_tiyin = int(amount * 100)
@@ -190,7 +190,7 @@ class StripeProvider(BaseProvider):
         expire: str,
         amount: Decimal,
         currency: str,
-        ext_id: Optional[uuid.UUID] = None,
+        ext_id: Optional[str] = None,
     ) -> ProviderResult:
         stripe.api_key = self.secret_key
         exp_month, exp_year = self._parse_expire(expire)
@@ -295,12 +295,12 @@ class PaymentService:
         amount: Decimal,
         currency: str,
         provider_name: str,
-        ext_id: Optional[uuid.UUID] = None,
+        ext_id: Optional[str] = None,
     ):
         from config.security import _search_token
         from .models import Payment
 
-        resolved_ext_id = ext_id if ext_id is not None else uuid.uuid4()
+        resolved_ext_id = ext_id if ext_id else str(uuid.uuid4())
 
         payment = Payment.objects.create(
             ext_id=resolved_ext_id,

@@ -1,13 +1,23 @@
+"""
+Combined migration merging shokh + izzatilla work:
+  - ext_id: CharField(null=True, blank=True, max_length=100), unique only when non-NULL
+             (izzatilla's approach — allows any external ID format, avoids NULL-unique issues)
+  - refund_id: CharField for storing Stripe refund IDs (shokh)
+  - status: adds REFUNDED choice (shokh)
+
+Two-step ext_id rollout (null first, backfill, then constrain) is safe for existing rows.
+"""
+
 import uuid
 
 from django.db import migrations, models
 
 
 def populate_ext_ids(apps, schema_editor):
-    """Generate unique ext_id values for any pre-existing Payment rows."""
+    """Generate unique ext_ids for any pre-existing Payment rows."""
     Payment = apps.get_model("payments", "Payment")
     for payment in Payment.objects.filter(ext_id__isnull=True):
-        payment.ext_id = uuid.uuid4()
+        payment.ext_id = str(uuid.uuid4())
         payment.save(update_fields=["ext_id"])
 
 
@@ -18,27 +28,31 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # 1. Add column as nullable so existing rows don't need a value yet.
+        # ── ext_id ────────────────────────────────────────────────────────────
+        # Step 1: add as nullable so existing rows don't need a value yet.
         migrations.AddField(
             model_name="payment",
             name="ext_id",
-            field=models.UUIDField(null=True, blank=True),
+            field=models.CharField(max_length=100, null=True, blank=True, db_index=True),
         ),
-        # 2. Backfill existing rows with unique UUIDs.
+        # Step 2: backfill existing rows with UUIDs.
         migrations.RunPython(populate_ext_ids, migrations.RunPython.noop),
-        # 3. Now enforce uniqueness + non-nullable + index.
-        migrations.AlterField(
+        # Step 3: add partial unique constraint (enforced only for non-NULL values).
+        migrations.AddConstraint(
             model_name="payment",
-            name="ext_id",
-            field=models.UUIDField(default=uuid.uuid4, unique=True, db_index=True),
+            constraint=models.UniqueConstraint(
+                fields=["ext_id"],
+                condition=models.Q(ext_id__isnull=False),
+                name="unique_payment_ext_id_when_not_null",
+            ),
         ),
-        # 4. Add refund tracking field.
+        # ── refund_id ─────────────────────────────────────────────────────────
         migrations.AddField(
             model_name="payment",
             name="refund_id",
             field=models.CharField(blank=True, max_length=200),
         ),
-        # 5. Extend status choices with REFUNDED.
+        # ── status: add REFUNDED choice ───────────────────────────────────────
         migrations.AlterField(
             model_name="payment",
             name="status",
