@@ -25,6 +25,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("task2/", include("task2.urls")),
     path("pay/", include("payments.urls")),
+    path("stripe/", include("payments.stripe_urls")),
 ]
 
 if settings.DEBUG:
