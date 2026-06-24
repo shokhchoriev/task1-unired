@@ -103,3 +103,51 @@ def link_card_to_tg(tg_id, card_number, expire_raw):
 
 def make_ext_id(tg_id):
     return f"tg-{tg_id}-{int(time.time())}"
+
+
+@sync_to_async
+def get_payment_by_ext_id(ext_id: str):
+    from payments.models import Payment
+    try:
+        return Payment.objects.get(ext_id=ext_id)
+    except Payment.DoesNotExist:
+        return None
+
+
+@sync_to_async
+def do_stripe_pay(card_number: str, expire: str, amount: str, currency: str, tg_id):
+    from decimal import Decimal
+    from payments.services import PaymentService
+    service = PaymentService()
+    ext_id = f"tg-stripe-{tg_id}-{int(time.time())}"
+    return service.pay(
+        card_number=card_number,
+        expire=expire,
+        amount=Decimal(amount),
+        currency=currency,
+        provider_name="stripe",
+        ext_id=ext_id,
+    )
+
+
+@sync_to_async
+def do_stripe_refund(ext_id: str):
+    from payments.models import Payment
+    from payments.services import PaymentService
+    try:
+        payment = Payment.objects.get(ext_id=ext_id, provider=Payment.Provider.STRIPE)
+    except Payment.DoesNotExist:
+        return None, "To'lov topilmadi"
+
+    if payment.status == Payment.Status.REFUNDED:
+        return payment, "To'lov allaqachon qaytarilgan"
+    if payment.status != Payment.Status.SUCCESS:
+        return None, f"Faqat muvaffaqiyatli to'lovni qaytarish mumkin (holat: {payment.status})"
+    if not payment.provider_transaction_id:
+        return None, "Stripe tranzaksiya IDsi yo'q"
+
+    result = PaymentService().refund(payment)
+    if result.success:
+        payment.refresh_from_db()
+        return payment, None
+    return None, result.error or "Qaytarish amalga oshmadi"

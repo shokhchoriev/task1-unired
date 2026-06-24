@@ -3,7 +3,7 @@ import logging
 import httpx
 from celery import shared_task
 from django.conf import settings
-from django.db.models import Sum, Count
+from django.db.models import Count, Sum
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ def _send_telegram_report(message: str) -> bool:
 
 def _build_stats_message(title: str) -> str:
     from cards.models import Card
+    from payments.models import Payment
     from task2.models import Transfer
 
     # ── Kartalar statistikasi ──────────────────────────────────────────────
@@ -59,6 +60,28 @@ def _build_stats_message(title: str) -> str:
         state=Transfer.State.CREATED
     ).aggregate(s=Sum("sending_amount"))["s"] or 0
 
+    # ── Stripe to'lovlar statistikasi ─────────────────────────────────────
+    pay_counts = {
+        row["status"]: row["cnt"]
+        for row in Payment.objects.values("status").annotate(cnt=Count("id"))
+    }
+    pay_total = Payment.objects.count()
+    pay_success  = pay_counts.get(Payment.Status.SUCCESS, 0)
+    pay_failed   = pay_counts.get(Payment.Status.FAILED, 0)
+    pay_pending  = pay_counts.get(Payment.Status.PENDING, 0)
+    pay_refunded = pay_counts.get(Payment.Status.REFUNDED, 0)
+
+    vol_usd = (
+        Payment.objects.filter(
+            status=Payment.Status.SUCCESS, currency="USD"
+        ).aggregate(s=Sum("amount"))["s"] or 0
+    )
+    vol_uzs = (
+        Payment.objects.filter(
+            status=Payment.Status.SUCCESS, currency="UZS"
+        ).aggregate(s=Sum("amount"))["s"] or 0
+    )
+
     return (
         f"<b>{title}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -76,7 +99,16 @@ def _build_stats_message(title: str) -> str:
         f"→ <b>{confirmed_amount:,.2f} UZS</b>\n"
         f"  ⏳ Kutilmoqda: <b>{pending_count}</b> "
         f"→ <b>{pending_amount:,.2f} UZS</b>\n"
-        f"  ❌ Bekor qilingan: <b>{cancelled_count}</b>"
+        f"  ❌ Bekor qilingan: <b>{cancelled_count}</b>\n\n"
+
+        f"💳 <b>STRIPE TO'LOVLAR</b>\n"
+        f"  Jami: <b>{pay_total}</b>\n"
+        f"  ✅ Muvaffaqiyatli: <b>{pay_success}</b>\n"
+        f"  ⏳ Kutilmoqda: <b>{pay_pending}</b>\n"
+        f"  ❌ Muvaffaqiyatsiz: <b>{pay_failed}</b>\n"
+        f"  🔄 Qaytarilgan: <b>{pay_refunded}</b>\n"
+        f"  💵 Hajm (USD): <b>{vol_usd:,.2f}</b>\n"
+        f"  💴 Hajm (UZS): <b>{vol_uzs:,.0f}</b>"
     )
 
 

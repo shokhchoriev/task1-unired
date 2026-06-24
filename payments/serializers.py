@@ -6,7 +6,7 @@ from .models import Payment
 
 
 class PaymentRequestSerializer(serializers.Serializer):
-    ext_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    ext_id = serializers.CharField(max_length=100, required=False, allow_null=True, allow_blank=True, default=None)
     card_number = serializers.CharField(min_length=16, max_length=16)
     expire = serializers.CharField(max_length=7, help_text="MM/YY or MM/YYYY")
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=1)
@@ -42,4 +42,4 @@ class PaymentResponseSerializer(serializers.ModelSerializer):
 
 
 class RefundRequestSerializer(serializers.Serializer):
-    ext_id = serializers.UUIDField()
+    ext_id = serializers.CharField(max_length=100)
