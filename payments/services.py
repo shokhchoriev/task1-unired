@@ -3,18 +3,21 @@ Payment service layer.
 
 Hierarchy:
   PaymentService          ← entry point (called from views)
-    └── PaymeProvider     ← Payme Merchant API
-    └── StripeProvider    ← Stripe API
+    └── PaymeProvider     ← Payme Merchant API (httpx)
+    └── StripeProvider    ← Stripe API (official stripe SDK)
 """
 
 import base64
+import json
 import logging
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 
 import httpx
+import stripe
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +42,9 @@ class BaseProvider(ABC):
         expire: str,
         amount: Decimal,
         currency: str,
+        ext_id: Optional[uuid.UUID] = None,
     ) -> ProviderResult:
-        """Kartadan to'lov amalga oshiradi va ProviderResult qaytaradi."""
+        """Charge a card and return a ProviderResult."""
 
 
 # ─── Payme provider ──────────────────────────────────────────────────────────
@@ -52,9 +56,7 @@ class PaymeProvider(BaseProvider):
     To'lov ketma-ketligi:
       1. cards.create  → karta token olish
       2. cards.get_verify_code → OTP yuborish
-      3. cards.verify  → OTP tasdiqlash, faol token olish
-      4. receipts.create → chek yaratish
-      5. receipts.pay    → to'lov amalga oshirish
+      3. receipts.create → chek yaratish
     """
 
     TEST_URL = "https://checkout.test.paycom.uz/api"
@@ -81,17 +83,22 @@ class PaymeProvider(BaseProvider):
         """MM/YY → YYMM  (Payme formatiga o'zgartirish)"""
         parts = expire.split("/")
         month = parts[0]
-        year = parts[1][-2:]  # oxirgi 2 xona (YYYY yoki YY ikkisi uchun ham ishlaydi)
+        year = parts[1][-2:]
         return f"{year}{month}"
 
-    def charge(self, card_number: str, expire: str, amount: Decimal, currency: str) -> ProviderResult:
+    def charge(
+        self,
+        card_number: str,
+        expire: str,
+        amount: Decimal,
+        currency: str,
+        ext_id: Optional[uuid.UUID] = None,
+    ) -> ProviderResult:
         payme_expire = self._parse_expire(expire)
-        # Payme tiyin ishlatadi: 1 UZS = 100 tiyin
         amount_tiyin = int(amount * 100)
 
         try:
             with httpx.Client(timeout=30) as client:
-                # 1. Karta token yaratish
                 create_resp = self._rpc(client, "cards.create", {
                     "card": {"number": card_number, "expire": payme_expire},
                     "save": False,
@@ -106,10 +113,7 @@ class PaymeProvider(BaseProvider):
 
                 card_token = create_resp["result"]["card"]["token"]
 
-                # 2. OTP yuborish
-                verify_resp = self._rpc(client, "cards.get_verify_code", {
-                    "token": card_token,
-                })
+                verify_resp = self._rpc(client, "cards.get_verify_code", {"token": card_token})
                 if "error" in verify_resp:
                     err = verify_resp["error"]
                     return ProviderResult(
@@ -118,7 +122,6 @@ class PaymeProvider(BaseProvider):
                         raw=verify_resp,
                     )
 
-                # 3. Chek yaratish (OTP tasdiqlanmagan holda ham receipts.create qilinadi)
                 receipt_resp = self._rpc(client, "receipts.create", {
                     "amount": amount_tiyin,
                     "account": {"card_token": card_token},
@@ -132,124 +135,143 @@ class PaymeProvider(BaseProvider):
                     )
 
                 invoice_id = receipt_resp["result"]["receipt"]["_id"]
-
-                return ProviderResult(
-                    success=True,
-                    transaction_id=invoice_id,
-                    raw=receipt_resp,
-                )
+                return ProviderResult(success=True, transaction_id=invoice_id, raw=receipt_resp)
 
         except httpx.HTTPStatusError as exc:
             logger.error("Payme HTTP xatosi: %s", exc)
-            return ProviderResult(success=False, error=f"Payme HTTP xatosi: {exc.response.status_code}", raw={})
+            return ProviderResult(success=False, error=f"Payme HTTP {exc.response.status_code}", raw={})
         except httpx.RequestError as exc:
             logger.error("Payme ulanish xatosi: %s", exc)
             return ProviderResult(success=False, error=f"Payme bilan bog'lanib bo'lmadi: {exc}", raw={})
-        except Exception as exc:
+        except Exception:
             logger.exception("Payme kutilmagan xato")
-            return ProviderResult(success=False, error=str(exc), raw={})
+            return ProviderResult(success=False, error="Unexpected Payme error", raw={})
 
 
 # ─── Stripe provider ─────────────────────────────────────────────────────────
 
 class StripeProvider(BaseProvider):
     """
-    Stripe API bilan ishlaydi (PaymentIntent + confirm).
+    Stripe API via the official stripe SDK.
 
-    To'lov ketma-ketligi:
-      1. payment_methods.create → karta ma'lumotlarini saqlash
-      2. payment_intents.create → to'lov yaratish va tasdiqlash
+    Charge flow:
+      1. stripe.PaymentMethod.create → tokenise raw card data
+      2. stripe.PaymentIntent.create(confirm=True) → create and confirm payment
+
+    ext_id is stored in the PaymentIntent metadata so it is visible in the
+    Stripe dashboard and echoed back in webhook events.
+
+    Note: confirm=True with a standard test card (4242 4242 4242 4242) succeeds
+    synchronously. Cards requiring 3DS will land in requires_action; the webhook
+    handler will update the local Payment record when Stripe resolves them.
     """
-
-    BASE_URL = "https://api.stripe.com/v1"
 
     def __init__(self, secret_key: str):
         self.secret_key = secret_key
 
     def _parse_expire(self, expire: str) -> tuple[str, str]:
-        """MM/YY yoki MM/YYYY → (month, year) qaytaradi."""
+        """MM/YY or MM/YYYY → (month, 4-digit year) as strings."""
         parts = expire.split("/")
         month = parts[0]
         year = parts[1] if len(parts[1]) == 4 else f"20{parts[1]}"
         return month, year
 
-    def charge(self, card_number: str, expire: str, amount: Decimal, currency: str) -> ProviderResult:
+    @staticmethod
+    def _to_dict(stripe_obj) -> dict:
+        """Convert a Stripe SDK object to a plain Python dict for JSON storage."""
+        try:
+            return json.loads(str(stripe_obj))
+        except Exception:
+            return {}
+
+    def charge(
+        self,
+        card_number: str,
+        expire: str,
+        amount: Decimal,
+        currency: str,
+        ext_id: Optional[uuid.UUID] = None,
+    ) -> ProviderResult:
+        stripe.api_key = self.secret_key
         exp_month, exp_year = self._parse_expire(expire)
-        # Stripe: USD uchun cents, UZS uchun butun son
-        amount_cents = int(amount * 100) if currency.upper() == "USD" else int(amount)
+        # Stripe uses smallest currency unit: cents for USD, whole units for UZS
+        amount_units = int(amount * 100) if currency.upper() == "USD" else int(amount)
 
         try:
-            with httpx.Client(timeout=30) as client:
-                # 1. PaymentMethod yaratish
-                pm_resp = client.post(
-                    f"{self.BASE_URL}/payment_methods",
-                    auth=(self.secret_key, ""),
-                    data={
-                        "type": "card",
-                        "card[number]": card_number,
-                        "card[exp_month]": exp_month,
-                        "card[exp_year]": exp_year,
-                    },
-                )
-                pm_data = pm_resp.json()
+            pm = stripe.PaymentMethod.create(
+                type="card",
+                card={
+                    "number": card_number,
+                    "exp_month": int(exp_month),
+                    "exp_year": int(exp_year),
+                },
+            )
 
-                if "error" in pm_data:
-                    err = pm_data["error"]
-                    return ProviderResult(
-                        success=False,
-                        error=err.get("message", "Karta ma'lumotlari noto'g'ri"),
-                        raw=pm_data,
-                    )
+            intent = stripe.PaymentIntent.create(
+                amount=amount_units,
+                currency=currency.lower(),
+                payment_method=pm.id,
+                confirm=True,
+                payment_method_types=["card"],
+                metadata={"ext_id": str(ext_id)} if ext_id else {},
+            )
 
-                pm_id = pm_data["id"]
+            succeeded = intent.status == "succeeded"
+            return ProviderResult(
+                success=succeeded,
+                transaction_id=intent.id,
+                error="" if succeeded else f"Payment status: {intent.status}",
+                raw=self._to_dict(intent),
+            )
 
-                # 2. PaymentIntent yaratish va tasdiqlash
-                pi_resp = client.post(
-                    f"{self.BASE_URL}/payment_intents",
-                    auth=(self.secret_key, ""),
-                    data={
-                        "amount": amount_cents,
-                        "currency": currency.lower(),
-                        "payment_method": pm_id,
-                        "confirm": "true",
-                        "payment_method_types[]": "card",
-                    },
-                )
-                pi_data = pi_resp.json()
+        except stripe.error.CardError as exc:
+            return ProviderResult(
+                success=False,
+                error=exc.user_message or str(exc),
+                raw=exc.json_body or {},
+            )
+        except stripe.error.InvalidRequestError as exc:
+            logger.error("Stripe invalid request: %s", exc)
+            return ProviderResult(success=False, error=str(exc), raw=exc.json_body or {})
+        except stripe.error.AuthenticationError:
+            logger.error("Stripe authentication failed — check STRIPE_SECRET_KEY")
+            return ProviderResult(success=False, error="Stripe authentication failed", raw={})
+        except stripe.error.StripeError as exc:
+            logger.error("Stripe error: %s", exc)
+            return ProviderResult(success=False, error=str(exc), raw=exc.json_body or {})
+        except Exception:
+            logger.exception("StripeProvider.charge unexpected error")
+            return ProviderResult(success=False, error="Unexpected error", raw={})
 
-                if "error" in pi_data:
-                    err = pi_data["error"]
-                    return ProviderResult(
-                        success=False,
-                        error=err.get("message", "To'lov amalga oshmadi"),
-                        raw=pi_data,
-                    )
-
-                return ProviderResult(
-                    success=True,
-                    transaction_id=pi_data.get("id", ""),
-                    raw=pi_data,
-                )
-
-        except httpx.HTTPStatusError as exc:
-            logger.error("Stripe HTTP xatosi: %s", exc)
-            return ProviderResult(success=False, error=f"Stripe HTTP xatosi: {exc.response.status_code}", raw={})
-        except httpx.RequestError as exc:
-            logger.error("Stripe ulanish xatosi: %s", exc)
-            return ProviderResult(success=False, error=f"Stripe bilan bog'lanib bo'lmadi: {exc}", raw={})
-        except Exception as exc:
-            logger.exception("Stripe kutilmagan xato")
-            return ProviderResult(success=False, error=str(exc), raw={})
+    def refund(self, payment_intent_id: str) -> ProviderResult:
+        """Create a full refund for a PaymentIntent."""
+        stripe.api_key = self.secret_key
+        try:
+            refund = stripe.Refund.create(payment_intent=payment_intent_id)
+            return ProviderResult(
+                success=True,
+                transaction_id=refund.id,
+                raw=self._to_dict(refund),
+            )
+        except stripe.error.InvalidRequestError as exc:
+            logger.error("Stripe refund invalid request: %s", exc)
+            return ProviderResult(success=False, error=str(exc), raw=exc.json_body or {})
+        except stripe.error.StripeError as exc:
+            logger.error("Stripe refund error: %s", exc)
+            return ProviderResult(success=False, error=str(exc), raw=exc.json_body or {})
+        except Exception:
+            logger.exception("StripeProvider.refund unexpected error")
+            return ProviderResult(success=False, error="Unexpected error", raw={})
 
 
 # ─── Payment service ──────────────────────────────────────────────────────────
 
 class PaymentService:
     """
-    View'dan chaqiriladigan yagona kirish nuqtasi.
+    Single entry point called from views.
 
-    Karta hashini yaratib Payment yozuvini saqlaydi, keyin
-    tanlangan provayderga to'lovni uzatadi va natijani qaytaradi.
+    Creates and persists a Payment record, dispatches to the chosen provider,
+    and updates the record with the outcome.
     """
 
     def __init__(self):
@@ -273,12 +295,15 @@ class PaymentService:
         amount: Decimal,
         currency: str,
         provider_name: str,
+        ext_id: Optional[uuid.UUID] = None,
     ):
         from config.security import _search_token
-
         from .models import Payment
 
+        resolved_ext_id = ext_id if ext_id is not None else uuid.uuid4()
+
         payment = Payment.objects.create(
+            ext_id=resolved_ext_id,
             card_number_hash=_search_token(card_number),
             amount=amount,
             currency=currency,
@@ -288,7 +313,7 @@ class PaymentService:
 
         try:
             provider = self._providers[provider_name]
-            result = provider.charge(card_number, expire, amount, currency)
+            result = provider.charge(card_number, expire, amount, currency, ext_id=resolved_ext_id)
 
             if result.success:
                 payment.status = Payment.Status.SUCCESS
@@ -301,13 +326,13 @@ class PaymentService:
 
         except KeyError:
             payment.status = Payment.Status.FAILED
-            payment.error_message = f"Noto'g'ri provaydar: {provider_name}"
-            logger.error("Noto'g'ri provaydar tanlandi: %s", provider_name)
+            payment.error_message = f"Unknown provider: {provider_name}"
+            logger.error("Unknown provider: %s", provider_name)
 
         except Exception:
             payment.status = Payment.Status.FAILED
-            payment.error_message = "Kutilmagan server xatosi"
-            logger.exception("PaymentService.pay muvaffaqiyatsiz: payment_id=%d", payment.pk)
+            payment.error_message = "Unexpected server error"
+            logger.exception("PaymentService.pay failed: payment_id=%d", payment.pk)
 
         payment.save(update_fields=[
             "status",
@@ -317,3 +342,23 @@ class PaymentService:
             "updated_at",
         ])
         return payment
+
+    def refund(self, payment):
+        """Issue a full refund for a successful Stripe payment, update DB atomically."""
+        from django.db import transaction
+        from .models import Payment as PaymentModel
+
+        provider = self._providers.get(payment.provider)
+        if not isinstance(provider, StripeProvider):
+            raise ValueError(f"Refunds not supported for provider '{payment.provider}'")
+
+        result = provider.refund(payment.provider_transaction_id)
+
+        if result.success:
+            with transaction.atomic():
+                locked = PaymentModel.objects.select_for_update().get(pk=payment.pk)
+                locked.refund_id = result.transaction_id
+                locked.status = PaymentModel.Status.REFUNDED
+                locked.save(update_fields=["refund_id", "status", "updated_at"])
+
+        return result
