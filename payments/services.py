@@ -155,26 +155,30 @@ class StripeProvider(BaseProvider):
     Stripe API via the official stripe SDK.
 
     Charge flow:
-      1. stripe.PaymentMethod.create → tokenise raw card data
+      1. Resolve a PaymentMethod ID (see below)
       2. stripe.PaymentIntent.create(confirm=True) → create and confirm payment
 
-    ext_id is stored in the PaymentIntent metadata so it is visible in the
-    Stripe dashboard and echoed back in webhook events.
+    PaymentMethod resolution — test vs. production:
+      * Test mode  (sk_test_*): pm_card_visa is used directly.  No real card data
+        is needed or transmitted; the bot collects card number / expiry for UX only.
+      * Production (sk_live_*): In correct Stripe architecture the client — a web
+        front-end using Stripe.js or a mobile app using the Stripe iOS/Android SDK —
+        tokenises the card locally and sends only a PaymentMethod ID (pm_xxx) to
+        this server.  Raw card numbers must never reach the backend; doing so is a
+        PCI DSS violation.  The `card_number` argument in that path is therefore
+        expected to carry a pm_xxx token, not a PAN.
 
-    Note: confirm=True with a standard test card (4242 4242 4242 4242) succeeds
-    synchronously. Cards requiring 3DS will land in requires_action; the webhook
-    handler will update the local Payment record when Stripe resolves them.
+    ext_id is stored in the PaymentIntent metadata so it is visible in the Stripe
+    dashboard and echoed back in webhook events.
     """
+
+    # Stripe's built-in test PaymentMethod — always succeeds, no 3DS, Visa network.
+    _TEST_PM = "pm_card_visa"
 
     def __init__(self, secret_key: str):
         self.secret_key = secret_key
-
-    def _parse_expire(self, expire: str) -> tuple[str, str]:
-        """MM/YY or MM/YYYY → (month, 4-digit year) as strings."""
-        parts = expire.split("/")
-        month = parts[0]
-        year = parts[1] if len(parts[1]) == 4 else f"20{parts[1]}"
-        return month, year
+        # Infer test mode from the key prefix so no extra config flag is needed.
+        self.test_mode = secret_key.startswith("sk_test_")
 
     @staticmethod
     def _to_dict(stripe_obj) -> dict:
@@ -187,30 +191,27 @@ class StripeProvider(BaseProvider):
     def charge(
         self,
         card_number: str,
-        expire: str,
+        expire: str,  # collected for UX only; not sent to Stripe (see class docstring)
         amount: Decimal,
         currency: str,
         ext_id: Optional[str] = None,
     ) -> ProviderResult:
         stripe.api_key = self.secret_key
-        exp_month, exp_year = self._parse_expire(expire)
-        # Stripe uses smallest currency unit: cents for USD, whole units for UZS
+
+        # In test mode use the predefined pm_card_visa token — no raw card data is
+        # sent to Stripe.  In production `card_number` must already be a PaymentMethod
+        # ID obtained from Stripe.js / the mobile SDK on the client side; the server
+        # never handles raw PANs (PCI DSS requirement).
+        pm_id = self._TEST_PM if self.test_mode else card_number
+
+        # Stripe amounts: smallest currency unit (cents for USD; whole units for UZS).
         amount_units = int(amount * 100) if currency.upper() == "USD" else int(amount)
 
         try:
-            pm = stripe.PaymentMethod.create(
-                type="card",
-                card={
-                    "number": card_number,
-                    "exp_month": int(exp_month),
-                    "exp_year": int(exp_year),
-                },
-            )
-
             intent = stripe.PaymentIntent.create(
                 amount=amount_units,
                 currency=currency.lower(),
-                payment_method=pm.id,
+                payment_method=pm_id,
                 confirm=True,
                 payment_method_types=["card"],
                 metadata={"ext_id": str(ext_id)} if ext_id else {},

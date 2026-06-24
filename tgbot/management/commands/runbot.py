@@ -5,8 +5,7 @@ class Command(BaseCommand):
     help = "Start the Telegram bot (long-polling mode)"
 
     def handle(self, *args, **options):
-        from tgbot.bot import build_application
+        from tgbot.bot import run_bot
 
         self.stdout.write(self.style.SUCCESS("Bot ishga tushmoqda..."))
-        app = build_application()
-        app.run_polling(drop_pending_updates=True)
+        run_bot()

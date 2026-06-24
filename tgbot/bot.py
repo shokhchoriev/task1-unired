@@ -63,6 +63,12 @@ _CANCEL_FILTER = filters.Regex("^❌ Bekor qilish$")
 _TEXT = filters.TEXT & ~filters.COMMAND
 
 
+def run_bot() -> None:
+    """Build and run the bot, blocking until stopped."""
+    app = build_application()
+    app.run_polling(drop_pending_updates=True, bootstrap_retries=-1)
+
+
 def build_application() -> Application:
     token = settings.TELEGRAM_BOT_TOKEN
 
@@ -178,3 +184,12 @@ def build_application() -> Application:
     app.add_handler(refund_conv)
 
     return app
+
+
+if __name__ == "__main__":
+    import django
+    import os
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    django.setup()
+    run_bot()
