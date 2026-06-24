@@ -12,6 +12,7 @@ class PaymentAdmin(admin.ModelAdmin):
         "card_number_hash",
         "provider_response",
         "provider_transaction_id",
+        "refund_id",
         "created_at",
         "updated_at",
     )
