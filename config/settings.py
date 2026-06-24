@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     "cards",
     "task2",
     "tgbot",
+    "payments",
 ]
 
 MIDDLEWARE = [
@@ -185,8 +186,9 @@ if not ENCRYPTION_KEY and DEBUG:
     ).decode()
 
 SIGNATURE_SECRET = os.getenv("SIGNATURE_SECRET", "")
-# Paths that skip signature verification (admin uses its own IP restriction)
-SIGNATURE_EXEMPT_PATHS = ["/admin/"]
+# Paths that skip our HMAC signature check.
+# /stripe/webhook/ is verified by Stripe's own signature (STRIPE_WEBHOOK_SECRET).
+SIGNATURE_EXEMPT_PATHS = ["/admin/", "/stripe/webhook/"]
 
 # Telegram report chat ID – set via env in production
 TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "")
@@ -219,12 +221,20 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 # ─── Cache (Redis) ────────────────────────────────────────────────────────────
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": REDIS_URL + "/1",
+if TESTING:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        }
     }
-}
+    SILENCED_SYSTEM_CHECKS = ["django_ratelimit.E003", "django_ratelimit.W001"]
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL + "/1",
+        }
+    }
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -267,8 +277,26 @@ LOGGING = {
             "level": "ERROR",
             "propagate": False,
         },
+        "payments.request": {
+            "handlers": ["request_file", "console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.error": {
+            "handlers": ["error_file", "console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
     },
 
 }
 
 RATELIMIT_VIEW = "cards.views.ratelimit_error"
+
+# ─── Payment providers ────────────────────────────────────────────────────────
+PAYME_MERCHANT_ID = os.getenv("PAYME_MERCHANT_ID", "")
+PAYME_SECRET_KEY = os.getenv("PAYME_SECRET_KEY", "")
+PAYME_TEST_MODE = env_bool("PAYME_TEST_MODE", True)
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")

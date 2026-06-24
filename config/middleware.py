@@ -44,6 +44,7 @@ class RequestSignatureMiddleware:
 
         body = request.body.decode("utf-8", errors="replace")
         expected = generate_hash(body, secret)
+        print(f"[DEBUG signature] secret[:6]={secret[:6]!r} | body_len={len(body)} | expected={expected} | received={sign}")
         if not hmac.compare_digest(expected, sign):
             return JsonResponse({"error": "Invalid signature"}, status=403)
 

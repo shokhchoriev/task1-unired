@@ -7,6 +7,7 @@ def main_menu():
             [KeyboardButton("💳 Kartalarim"), KeyboardButton("➕ Karta qo'shish")],
             [KeyboardButton("💸 O'tkazma"), KeyboardButton("📋 Tarix")],
             [KeyboardButton("🔗 Karta ulash"), KeyboardButton("🪪 Mening ID'm")],
+            [KeyboardButton("💳 Stripe to'lov")],
         ],
         resize_keyboard=True,
     )
@@ -45,3 +46,12 @@ def currency_keyboard():
 
 def cancel_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("❌ Bekor qilish")]], resize_keyboard=True)
+
+
+def payment_currency_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🇺🇸 USD", callback_data="pay_currency_USD"),
+            InlineKeyboardButton("🇺🇿 UZS", callback_data="pay_currency_UZS"),
+        ]
+    ])

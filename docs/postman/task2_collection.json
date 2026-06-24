@@ -10,6 +10,12 @@
       "key": "base_url",
       "value": "{{base_url}}",
       "type": "string"
+    },
+    {
+      "key": "user_secret",
+      "value": "",
+      "type": "string",
+      "description": "UserProfile.secret — Django admin dan olib kiriting"
     }
   ],
   "item": [
@@ -423,6 +429,109 @@
           "code": 200,
           "header": [{ "key": "Content-Type", "value": "application/json" }],
           "body": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"result\": [\n    {\n      \"ext_id\": \"tr-1716371234567\",\n      \"sending_amount\": \"50000.00\",\n      \"state\": \"confirmed\",\n      \"created_at\": \"2026-05-22T14:30:01\"\n    }\n  ]\n}"
+        }
+      ]
+    },
+    {
+      "name": "Task 5 – Security Tests",
+      "item": [
+        {
+          "name": "5.3 Wrong Signature → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Wrong signature returns 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "request-sign", "value": "wrong_signature_value" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.create\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"sender_card_number\": \"{{sender_card_number}}\",\n    \"sender_card_expiry\": \"{{sender_card_expiry}}\",\n    \"receiver_card_number\": \"{{receiver_card_number}}\",\n    \"sending_amount\": {{sending_amount}},\n    \"currency\": {{currency}}\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+            "description": "Sends a fixed wrong signature. Server must reject with 403."
+          },
+          "response": []
+        },
+        {
+          "name": "5.3 Missing Signature → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Missing signature returns 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.create\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"sender_card_number\": \"{{sender_card_number}}\",\n    \"sender_card_expiry\": \"{{sender_card_expiry}}\",\n    \"receiver_card_number\": \"{{receiver_card_number}}\",\n    \"sending_amount\": {{sending_amount}},\n    \"currency\": {{currency}}\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+            "description": "No request-sign header. Server must reject with 403."
+          },
+          "response": []
+        },
+        {
+          "name": "5.3 Correct Signature → passes",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const secret = pm.collectionVariables.get(\"user_secret\");",
+                  "const body = pm.request.body.raw;",
+                  "const signature = CryptoJS.HmacSHA256(body, secret).toString();",
+                  "pm.request.headers.add({ key: \"request-sign\", value: signature });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Correct signature passes\", () => pm.response.to.not.have.status(403));",
+                  "pm.test(\"Status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"transfer.create\",\n  \"params\": {\n    \"ext_id\": \"{{ext_id}}\",\n    \"sender_card_number\": \"{{sender_card_number}}\",\n    \"sender_card_expiry\": \"{{sender_card_expiry}}\",\n    \"receiver_card_number\": \"{{receiver_card_number}}\",\n    \"sending_amount\": {{sending_amount}},\n    \"currency\": {{currency}}\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{base_url}}", "host": ["{{base_url}}"] },
+            "description": "Computes HMAC-SHA256 signature from body + user_secret. Server must accept and return 200."
+          },
+          "response": []
         }
       ]
     }
