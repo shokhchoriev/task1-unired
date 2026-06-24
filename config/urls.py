@@ -24,6 +24,7 @@ from django.urls import include, path
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("task2/", include("task2.urls")),
+    path("pay/", include("payments.urls")),
 ]
 
 if settings.DEBUG:
