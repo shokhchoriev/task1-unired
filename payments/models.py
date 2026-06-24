@@ -16,7 +16,8 @@ class Payment(models.Model):
         PAYME = "payme", "Payme"
         STRIPE = "stripe", "Stripe"
 
-    ext_id = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
+    # unique=True removed — NULL uniqueness is enforced via UniqueConstraint below
+    ext_id = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     # card number is hashed for lookup; raw number is never stored
     card_number_hash = models.CharField(max_length=64, db_index=True)
     amount = models.DecimalField(
@@ -38,6 +39,13 @@ class Payment(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["ext_id"],
+                condition=models.Q(ext_id__isnull=False),
+                name="unique_payment_ext_id_when_not_null",
+            ),
+        ]
 
     def __str__(self):
         return f"Payment {self.ext_id} | {self.provider} | {self.status} | {self.amount} {self.currency}"
