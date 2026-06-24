@@ -109,11 +109,12 @@ def stripe_webhook(request):
     intent_id = intent["id"]
     event_type = event["type"]
 
+    updated_payment = None
     if event_type == "payment_intent.succeeded":
-        _apply_webhook_status(intent_id, Payment.Status.SUCCESS, None, intent)
+        updated_payment = _apply_webhook_status(intent_id, Payment.Status.SUCCESS, None, intent)
     elif event_type == "payment_intent.payment_failed":
         last_error = intent.get("last_payment_error") or {}
-        _apply_webhook_status(
+        updated_payment = _apply_webhook_status(
             intent_id,
             Payment.Status.FAILED,
             last_error.get("message", "Payment failed"),
@@ -122,14 +123,26 @@ def stripe_webhook(request):
     else:
         logger.debug("Stripe webhook: unhandled event type '%s'", event_type)
 
+    if updated_payment is not None:
+        try:
+            from cards.models import Card
+            from task2.utils import send_payment_notification
+            card = Card.objects.filter(card_number_hash=updated_payment.card_number_hash).first()
+            if card and card.tg_id:
+                send_payment_notification(card.tg_id, updated_payment)
+        except Exception:
+            logger.exception(
+                "Failed to send payment notification for payment pk=%s", updated_payment.pk
+            )
+
     return HttpResponse(status=200)
 
 
-def _apply_webhook_status(intent_id: str, new_status: str, error_msg, raw) -> None:
+def _apply_webhook_status(intent_id: str, new_status: str, error_msg, raw):
     """Update a Payment by provider_transaction_id inside a serialisable transaction.
 
     select_for_update() prevents a race condition when two webhook deliveries
-    for the same event arrive simultaneously.
+    for the same event arrive simultaneously. Returns the updated Payment or None.
     """
     with transaction.atomic():
         try:
@@ -142,10 +155,10 @@ def _apply_webhook_status(intent_id: str, new_status: str, error_msg, raw) -> No
                 "before the synchronous charge response is saved — Stripe will retry)",
                 intent_id,
             )
-            return
+            return None
 
         if payment.status == new_status:
-            return  # idempotent — already in the target state
+            return None  # idempotent — already in the target state
 
         update_fields = ["status", "provider_response", "updated_at"]
         payment.status = new_status
@@ -164,6 +177,7 @@ def _apply_webhook_status(intent_id: str, new_status: str, error_msg, raw) -> No
             "Stripe webhook: Payment pk=%s (intent=%s) → %s",
             payment.pk, intent_id, new_status,
         )
+        return payment
 
 
 # ─── Stripe refund ────────────────────────────────────────────────────────────

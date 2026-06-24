@@ -19,6 +19,17 @@ from tgbot.handlers.card import (
     link_card_start,
 )
 from tgbot.handlers.common import cancel_conv, help_cmd, my_cards, my_id, start
+from tgbot.handlers.payment import (
+    pay_amount_received,
+    pay_card_received,
+    pay_currency_selected,
+    pay_expiry_received,
+    pay_start,
+    payment_status_ext_id_received,
+    payment_status_start,
+    refund_ext_id_received,
+    refund_start,
+)
 from tgbot.handlers.transfer import (
     amount_entered,
     currency_selected,
@@ -35,6 +46,12 @@ from tgbot.states import (
     CARD_PHONE,
     LINK_CARD_EXPIRY,
     LINK_CARD_NUMBER,
+    PAY_AMOUNT,
+    PAY_CARD_EXPIRY,
+    PAY_CARD_NUMBER,
+    PAY_CURRENCY,
+    PAY_REFUND_EXT_ID,
+    PAY_STATUS_EXT_ID,
     TRF_AMOUNT,
     TRF_CURRENCY,
     TRF_OTP,
@@ -99,6 +116,45 @@ def build_application() -> Application:
         ],
     )
 
+    pay_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("pay", pay_start),
+            MessageHandler(filters.Regex("^💳 Stripe to'lov$"), pay_start),
+        ],
+        states={
+            PAY_CARD_NUMBER: [MessageHandler(_TEXT, pay_card_received)],
+            PAY_CARD_EXPIRY: [MessageHandler(_TEXT, pay_expiry_received)],
+            PAY_AMOUNT:      [MessageHandler(_TEXT, pay_amount_received)],
+            PAY_CURRENCY:    [CallbackQueryHandler(pay_currency_selected, pattern=r"^pay_currency_")],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_conv),
+            MessageHandler(_CANCEL_FILTER, cancel_conv),
+        ],
+    )
+
+    payment_status_conv = ConversationHandler(
+        entry_points=[CommandHandler("payment_status", payment_status_start)],
+        states={
+            PAY_STATUS_EXT_ID: [MessageHandler(_TEXT, payment_status_ext_id_received)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_conv),
+            MessageHandler(_CANCEL_FILTER, cancel_conv),
+        ],
+    )
+
+    refund_conv = ConversationHandler(
+        entry_points=[CommandHandler("refund", refund_start)],
+        states={
+            PAY_REFUND_EXT_ID: [MessageHandler(_TEXT, refund_ext_id_received)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_conv),
+            MessageHandler(_CANCEL_FILTER, cancel_conv),
+        ],
+    )
+
     app = Application.builder().token(token).build()
 
     # Simple commands
@@ -117,5 +173,8 @@ def build_application() -> Application:
     app.add_handler(add_card_conv)
     app.add_handler(link_card_conv)
     app.add_handler(transfer_conv)
+    app.add_handler(pay_conv)
+    app.add_handler(payment_status_conv)
+    app.add_handler(refund_conv)
 
     return app

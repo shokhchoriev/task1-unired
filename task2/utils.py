@@ -277,8 +277,42 @@ def check_otp(transfer, otp):
 
     if transfer.otp != otp:
         transfer.try_count += 1
-        
+
         transfer.save(update_fields=["try_count", "updated_at"])
-        raise Exception(f"Noto‘g‘ri OTP, yana {3 - transfer.try_count} urinish qoldi")
+        raise Exception(f"Noto’g’ri OTP, yana {3 - transfer.try_count} urinish qoldi")
 
     return True
+
+
+def send_payment_notification(tg_id, payment) -> bool:
+    """Send a Stripe payment status update to a user’s Telegram chat."""
+    token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    if not token or not tg_id:
+        logger.warning("[PAYMENT_NOTIFY] Missing token or tg_id=%s", tg_id)
+        return False
+
+    status_emojis = {"success": "✅", "failed": "❌", "pending": "⏳", "refunded": "🔄"}
+    emoji = status_emojis.get(payment.status, "•")
+    text = (
+        f"{emoji} <b>To’lov holati</b>\n\n"
+        f"Holat: <b>{payment.status.upper()}</b>\n"
+        f"Miqdor: <b>{payment.amount} {payment.currency}</b>\n"
+        f"ext_id: <code>{payment.ext_id}</code>"
+    )
+    if payment.error_message:
+        text += f"\n❗ Xato: {payment.error_message}"
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        resp = httpx.post(
+            url,
+            json={"chat_id": int(tg_id), "text": text, "parse_mode": "HTML"},
+            timeout=5,
+        )
+        ok = resp.status_code == 200 and resp.json().get("ok")
+        if not ok:
+            logger.warning("[PAYMENT_NOTIFY] API error for tg_id=%s: %s", tg_id, resp.text[:200])
+        return ok
+    except Exception:
+        logger.exception("[PAYMENT_NOTIFY] Failed for tg_id=%s", tg_id)
+        return False
