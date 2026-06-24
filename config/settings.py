@@ -186,8 +186,9 @@ if not ENCRYPTION_KEY and DEBUG:
     ).decode()
 
 SIGNATURE_SECRET = os.getenv("SIGNATURE_SECRET", "")
-# Paths that skip signature verification (admin uses its own IP restriction)
-SIGNATURE_EXEMPT_PATHS = ["/admin/"]
+# Paths that skip our HMAC signature check.
+# /stripe/webhook/ is verified by Stripe's own signature (STRIPE_WEBHOOK_SECRET).
+SIGNATURE_EXEMPT_PATHS = ["/admin/", "/stripe/webhook/"]
 
 # Telegram report chat ID – set via env in production
 TELEGRAM_REPORT_CHAT_ID = os.getenv("TELEGRAM_REPORT_CHAT_ID", "")
@@ -298,3 +299,4 @@ PAYME_SECRET_KEY = os.getenv("PAYME_SECRET_KEY", "")
 PAYME_TEST_MODE = env_bool("PAYME_TEST_MODE", True)
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
